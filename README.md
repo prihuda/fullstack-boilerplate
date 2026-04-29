@@ -1,0 +1,256 @@
+# Fullstack Boilerplate
+
+Full-stack authentication boilerplate with Go backend and React frontend. Login, logout, JWT with refresh token rotation, protected routes — ready to extend.
+
+## Stack
+
+| Layer       | Technology                                                    |
+| ----------- | ------------------------------------------------------------- |
+| Backend     | Go 1.26, chi v5, pgx v5, Bun ORM, PostgreSQL 18, KeyDB/Redis |
+| Frontend    | React 19, TypeScript 5.9, Vite 8, TanStack (Router + Query + Form), Tailwind v4, lucide-react 1.12 |
+| Deployment  | Docker, Docker Compose, Nginx, Cloudflare Tunnel              |
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.26+
+- Node 24+
+- Docker + Docker Compose (for PostgreSQL + Redis)
+- `make` (optional)
+
+### 1. Clone and start infrastructure
+
+```bash
+docker network create app-network
+cd backend && docker compose up -d postgres keydb
+```
+
+### 2. Backend
+
+```bash
+cd backend
+cp .env.example .env        # edit JWT_SECRET and DATABASE_URL
+go mod tidy
+go run ./cmd/server
+```
+
+Server starts on `:8080`. Health check: `curl http://localhost:8080/api/v1/health`
+
+### 3. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Opens at `http://localhost:5173` with hot reload.
+
+---
+
+## Backend
+
+### Architecture
+
+```
+cmd/server/main.go           — entry point, wiring, graceful shutdown
+internal/
+  config/config.go           — env-based configuration
+  handler/
+    auth_handler.go          — POST /login, /refresh, /logout, GET /me
+    health_handler.go        — GET /health (DB + Redis ping)
+  middleware/
+    auth.go                  — JWT verification from cookie or Authorization header
+    cors.go                  — configurable CORS with credentials support
+    logger.go                — structured request logging via slog
+    ratelimit.go             — Redis sliding window rate limiter
+    security.go              — OWASP security headers
+    validate.go              — generic JSON request validation
+  model/
+    user.go                  — User, RefreshToken structs
+    response.go              — APIResponse, ErrorResponse, ValidationError
+  repository/
+    user_repo.go             — bun.IDB-based user CRUD
+    refresh_token_repo.go    — token rotation in PostgreSQL transaction
+  service/
+    auth_service.go          — Login (bcrypt + JWT), Refresh (rotation), Logout, GetUser
+pkg/database/
+  postgres.go                — pgx pool with Bun ORM wrapper
+migrations/                  — SQL migration files
+```
+
+### Auth Flow
+
+```
+Login → bcrypt verify → JWT (15min, signed) + refresh token (32 bytes random, SHA256 in DB)
+                         ↓
+                   Set HttpOnly cookies:
+                     - access_token (path: /api/v1/auth)
+                     - refresh_token (path: /api/v1/auth/refresh)
+                         ↓
+/api/auth/me → read access_token cookie → verify JWT → return user
+                         ↓
+/api/auth/refresh → read refresh_token cookie → hash → DB lookup → verify not expired
+                    → DELETE old token → INSERT new token (in TX) → return new JWT + new refresh
+                         ↓
+/api/auth/logout → hash refresh_token → DELETE from DB → clear cookies
+```
+
+### Key Security Decisions
+
+- **HttpOnly cookies** — tokens never accessible to JavaScript (XSS-proof)
+- **Refresh token rotation** — each refresh invalidates the old token (theft detection: if a stolen token is used, the legitimate user's next refresh fails)
+- **Bcrypt cost 12** — ~250ms per hash, slows brute force
+- **JWT short expiry** — 15 minutes limits window for stolen access tokens
+- **Refresh token SHA256 hashed** — DB leak doesn't expose valid tokens
+- **Rate limiting** — Redis sliding window, per IP, with trusted CIDR bypass
+- **Structured validation** — generic `ValidateRequest[T]` with MaxBytesReader (1MB) prevents large payload attacks
+
+### API Endpoints
+
+| Method | Path                     | Auth     | Description                    |
+| ------ | ------------------------ | -------- | ------------------------------ |
+| POST   | /api/v1/auth/login       | No       | Login with email + password    |
+| POST   | /api/v1/auth/refresh     | Cookie   | Rotate refresh token           |
+| POST   | /api/v1/auth/logout      | Cookie   | Clear auth state               |
+| GET    | /api/v1/auth/me          | Cookie   | Get current user               |
+| GET    | /api/v1/health           | No       | DB + Redis health check        |
+
+### Configuration
+
+| Variable             | Default                  | Required | Description                        |
+| -------------------- | ------------------------ | -------- | ---------------------------------- |
+| SERVER_PORT          | 8080                     | No       | HTTP listen port                   |
+| DATABASE_URL         | —                        | Yes      | PostgreSQL connection string       |
+| JWT_SECRET           | —                        | **Yes**  | JWT signing key (min 32 chars)     |
+| CORS_ALLOWED_ORIGINS | http://localhost:3000    | No       | Comma-separated allowed origins   |
+| LOG_LEVEL            | info                     | No       | debug, info, warn, error           |
+| COOKIE_SECURE        | true                     | No       | Set Secure flag on cookies (false for local HTTP dev) |
+| REDIS_URL            | localhost:6379           | No       | Redis/KeyDB address                |
+
+### Database
+
+PostgreSQL with pgx connection pool (MaxConns=20, MinConns=5). Bun ORM for typed queries.
+
+Migrations in `migrations/` — run via Bun migrator on startup.
+
+### Running Tests
+
+```bash
+cd backend
+go test ./...                    # all tests
+go test ./internal/service/...   # single package
+```
+
+---
+
+## Frontend
+
+### Architecture
+
+```
+src/
+  App.tsx                       — QueryClient, Router, Toast provider
+  main.tsx                      — React 19 StrictMode mount
+  index.css                     — Tailwind v4 @theme tokens
+  routeTree.gen.ts              — auto-generated by TanStack Router plugin
+  lib/
+    api.ts                      — typed fetch client with credentials:include
+    constants.ts                — API_BASE_URL from env
+    utils.ts                    — cn() helper
+  hooks/
+    use-auth.tsx                — AuthProvider + useAuth context (login/logout/checkAuth)
+    use-toast.tsx               — Toast notifications with auto-dismiss
+    use-idle-timeout.ts         — 30-min auto-logout on inactivity
+  components/
+    layout/
+      query-error-boundary.tsx  — Error boundary with retry
+    ui/
+      button.tsx                — CVA button (6 variants)
+      card.tsx                  — Card layout components
+      input.tsx                 — Styled input with error state
+      label.tsx                 — Form label
+  routes/
+    __root.tsx                  — Auth guard, AuthProvider wrapper, idle timeout
+    login.tsx                   — Email + password form with TanStack Form
+    index.tsx                   — Dashboard with user info and logout
+```
+
+### Auth State
+
+Auth state is managed via React Context (`AuthProvider`) + TanStack Query (`/auth/me` with 30s staleTime). No global state library:
+
+- **On mount**: check if auth cookie exists by calling `/auth/me`
+- **Login**: POST credentials → set cookies → update context user
+- **Logout**: POST /auth/logout → clear cookies → clear context → redirect to /login
+- **Protected routes**: `__root.tsx` route guard checks auth before rendering; redirects to /login if unauthenticated
+
+### Configuration
+
+| Variable       | Default                    | Description                   |
+| -------------- | -------------------------- | ----------------------------- |
+| VITE_API_URL   | http://localhost:8080/api/v1 | Backend API base URL        |
+
+---
+
+## Docker
+
+### Full Stack
+
+```bash
+# Create shared network (one-time)
+docker network create app-network
+
+# Start all services
+cd backend && docker compose up -d
+cd frontend && docker compose up -d
+```
+
+### Production
+
+See `docker-compose.prod.yml` for production deployment with:
+- PostgreSQL with persistent volume
+- KeyDB (multi-threaded Redis) with LRU eviction
+- Nginx serving SPA with gzip + asset caching
+- Backend with resource limits (512MB, 1 CPU)
+
+---
+
+## Project Structure
+
+```
+root/
+  backend/         Go API server
+  frontend/        React SPA
+  docker-compose.prod.yml   Production deployment
+```
+
+---
+
+## Extending
+
+### Adding a new page
+
+1. Create `src/routes/items.tsx` with `createFileRoute('/items')`
+2. TanStack Router auto-generates the route tree
+3. Add link in your navigation
+
+### Adding a new API endpoint
+
+1. Add handler in `backend/internal/handler/`
+2. Register route in `cmd/server/main.go`
+3. Add repository method if needed
+4. Add frontend API call in `src/lib/api.ts`
+
+### Adding a new database table
+
+1. Create migration in `backend/migrations/`
+2. Add model struct in `backend/internal/model/`
+3. Add repository in `backend/internal/repository/`
+
+---
+
+## License
+
+MIT
