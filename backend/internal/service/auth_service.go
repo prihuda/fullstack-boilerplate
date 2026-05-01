@@ -50,6 +50,7 @@ type LoginResult struct {
 	AccessToken  string
 	RefreshToken string
 	User         *model.User
+	ExpiresAt    time.Time
 }
 
 func (s *AuthService) Login(ctx context.Context, email, password string) (*LoginResult, error) {
@@ -93,12 +94,14 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 		AccessToken:  accessToken,
 		RefreshToken: rawRefreshToken,
 		User:         user,
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
 	}, nil
 }
 
 type RefreshResult struct {
 	AccessToken  string
 	RefreshToken string
+	ExpiresAt    time.Time
 }
 
 func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*RefreshResult, error) {
@@ -174,6 +177,7 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*RefreshRes
 	return &RefreshResult{
 		AccessToken:  accessToken,
 		RefreshToken: newRawToken,
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
 	}, nil
 }
 

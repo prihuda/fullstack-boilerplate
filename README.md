@@ -1,6 +1,6 @@
 # Fullstack Boilerplate
 
-Full-stack authentication boilerplate with Go backend and React frontend. Login, logout, JWT with refresh token rotation, protected routes — ready to extend.
+Full-stack Go + React boilerplate with PostgreSQL, Redis, Docker — ready to extend.
 
 ## Stack
 
@@ -80,42 +80,17 @@ pkg/database/
 migrations/                  — SQL migration files
 ```
 
-### Auth Flow
-
-```
-Login → bcrypt verify → JWT (15min, signed) + refresh token (32 bytes random, SHA256 in DB)
-                         ↓
-                   Set HttpOnly cookies:
-                     - access_token (path: /api/v1/auth)
-                     - refresh_token (path: /api/v1/auth/refresh)
-                         ↓
-/api/auth/me → read access_token cookie → verify JWT → return user
-                         ↓
-/api/auth/refresh → read refresh_token cookie → hash → DB lookup → verify not expired
-                    → DELETE old token → INSERT new token (in TX) → return new JWT + new refresh
-                         ↓
-/api/auth/logout → hash refresh_token → DELETE from DB → clear cookies
-```
-
-### Key Security Decisions
-
-- **HttpOnly cookies** — tokens never accessible to JavaScript (XSS-proof)
-- **Refresh token rotation** — each refresh invalidates the old token (theft detection: if a stolen token is used, the legitimate user's next refresh fails)
-- **Bcrypt cost 12** — ~250ms per hash, slows brute force
-- **JWT short expiry** — 15 minutes limits window for stolen access tokens
-- **Refresh token SHA256 hashed** — DB leak doesn't expose valid tokens
-- **Rate limiting** — Redis sliding window, per IP, with trusted CIDR bypass
-- **Structured validation** — generic `ValidateRequest[T]` with MaxBytesReader (1MB) prevents large payload attacks
-
 ### API Endpoints
 
-| Method | Path                     | Auth     | Description                    |
-| ------ | ------------------------ | -------- | ------------------------------ |
-| POST   | /api/v1/auth/login       | No       | Login with email + password    |
-| POST   | /api/v1/auth/refresh     | Cookie   | Rotate refresh token           |
-| POST   | /api/v1/auth/logout      | Cookie   | Clear auth state               |
-| GET    | /api/v1/auth/me          | Cookie   | Get current user               |
-| GET    | /api/v1/health           | No       | DB + Redis health check        |
+| Method | Path                     | Auth     | Description                          |
+| ------ | ------------------------ | -------- | ------------------------------------ |
+| POST   | /api/v1/auth/login       | No       | Login — sets cookies + returns tokens|
+| POST   | /api/v1/auth/refresh     | Token*   | Rotate refresh token (cookie or body)|
+| POST   | /api/v1/auth/logout      | Token*   | Revoke refresh token (cookie or body)|
+| GET    | /api/v1/auth/me          | JWT      | Get current user                     |
+| GET    | /api/v1/health           | No       | DB + Redis health check              |
+
+_* Token can be sent as HttpOnly cookie (web) or `refresh_token` in JSON body (API clients)._
 
 ### Configuration
 
@@ -127,7 +102,7 @@ Login → bcrypt verify → JWT (15min, signed) + refresh token (32 bytes random
 | CORS_ALLOWED_ORIGINS | http://localhost:3000    | No       | Comma-separated allowed origins   |
 | LOG_LEVEL            | info                     | No       | debug, info, warn, error           |
 | COOKIE_SECURE        | true                     | No       | Set Secure flag on cookies (false for local HTTP dev) |
-| REDIS_URL            | localhost:6379           | No       | Redis/KeyDB address                |
+| KEYDB_ADDR            | localhost:6379           | No       | Redis/KeyDB address                |
 
 ### Database
 
@@ -176,15 +151,6 @@ src/
     login.tsx                   — Email + password form with TanStack Form
     index.tsx                   — Dashboard with user info and logout
 ```
-
-### Auth State
-
-Auth state is managed via React Context (`AuthProvider`) + TanStack Query (`/auth/me` with 30s staleTime). No global state library:
-
-- **On mount**: check if auth cookie exists by calling `/auth/me`
-- **Login**: POST credentials → set cookies → update context user
-- **Logout**: POST /auth/logout → clear cookies → clear context → redirect to /login
-- **Protected routes**: `__root.tsx` route guard checks auth before rendering; redirects to /login if unauthenticated
 
 ### Configuration
 

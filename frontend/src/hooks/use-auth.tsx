@@ -9,8 +9,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { post, get } from '@/lib/api';
-import type { User, AuthResponse, LoginRequest } from '@/types/auth';
-
+import type { User, TokenResponse, LoginRequest } from '@/types/auth';
 interface AuthState {
   user: User | null;
   isLoading: boolean;
@@ -40,8 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkAuth = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true }));
     try {
-      const data = await get<AuthResponse>('/auth/me');
-      setState({ user: data.user, isLoading: false, isAuthenticated: true });
+      const user = await get<User>('/auth/me');
+      setState({ user, isLoading: false, isAuthenticated: true });
     } catch {
       setState({ user: null, isLoading: false, isAuthenticated: false });
     }
@@ -49,10 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const body: LoginRequest = { email, password };
-    const data = await post<AuthResponse>('/auth/login', body);
-    setState({ user: data.user, isLoading: false, isAuthenticated: true });
+    await post<TokenResponse>('/auth/login', body);
+    // Cookies are set by backend — now fetch user info
+    await checkAuth();
     await queryClient.invalidateQueries({ queryKey: AUTH_KEY });
-  }, [queryClient]);
+  }, [checkAuth, queryClient]);
 
   const logout = useCallback(async () => {
     try {

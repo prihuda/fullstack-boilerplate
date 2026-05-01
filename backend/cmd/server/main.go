@@ -149,7 +149,7 @@ func main() {
 	sig := <-quit
 	slog.Info("shutting down server", "signal", sig.String())
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout())
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
