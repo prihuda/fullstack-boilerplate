@@ -10,8 +10,11 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface AuthResponse {
-  user: User;
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  expires_at: string;
 }
 
 export interface ApiError {

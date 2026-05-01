@@ -44,19 +44,102 @@ async function tryRefreshToken(): Promise<boolean> {
   return refreshPromise;
 }
 
+// ── GET deduplication ─────────────────────────────────────────────
+
+const pendingRequests = new Map<string, Promise<unknown>>();
+
 // ── Response handling ──────────────────────────────────────────────
 
-function buildHeaders(): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-  };
+const MUTATION_TIMEOUT = 30_000; // 30 seconds
+
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  const url = `${API_BASE_URL}${path}`;
+  const key = `${method}:${url}`;
+
+  // Deduplicate concurrent GET requests to the same URL
+  if (method === 'GET' && pendingRequests.has(key)) {
+    return pendingRequests.get(key) as Promise<T>;
+  }
+
+  const promise = doRequest<T>(method, url, body, signal);
+
+  if (method === 'GET') {
+    pendingRequests.set(key, promise);
+    promise.finally(() => pendingRequests.delete(key));
+  }
+
+  return promise;
+}
+
+async function doRequest<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  // Add AbortController timeout for mutations (POST, PUT, DELETE)
+  let controller: AbortController | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  if (method !== 'GET') {
+    controller = new AbortController();
+    timeoutId = setTimeout(() => controller!.abort(), MUTATION_TIMEOUT);
+  }
+
+  const signals = [signal, controller?.signal].filter(Boolean);
+  const combinedSignal = signals.length > 0
+    ? (AbortSignal as any).any
+      ? (AbortSignal as any).any(signals)
+      : signals[0]
+    : undefined;
+
+  try {
+    let response = await fetch(url, {
+      method,
+      headers,
+      credentials: 'include',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: combinedSignal,
+    });
+
+    // Auto-refresh on 401: attempt to rotate tokens, then retry once
+    if (response.status === 401) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) {
+        response = await fetch(url, {
+          method,
+          headers,
+          credentials: 'include',
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: combinedSignal,
+        });
+      }
+    }
+
+    return handleResponse<T>(response);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorData: ApiError;
     try {
-      errorData = (await response.json()) as ApiError;
+      const body = await response.json();
+      errorData = body.error ?? body as ApiError;
     } catch {
       errorData = {
         code: 'UNKNOWN',
@@ -74,38 +157,12 @@ async function handleResponse<T>(response: Response): Promise<T> {
     return undefined as T;
   }
 
-  return response.json() as Promise<T>;
-}
-
-export async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  signal?: AbortSignal | null,
-): Promise<T> {
-  const url = `${API_BASE_URL}${path}`;
-  const options: RequestInit = {
-    method,
-    headers: buildHeaders(),
-    credentials: 'include',
-    signal: signal ?? undefined,
-  };
-
-  if (body !== undefined) {
-    options.body = JSON.stringify(body);
+  const body = await response.json();
+  // Unwrap from { success, data } envelope
+  if (body && typeof body === 'object' && 'data' in body) {
+    return body.data as T;
   }
-
-  let response = await fetch(url, options);
-
-  // Auto-refresh on 401: attempt to rotate tokens, then retry once
-  if (response.status === 401) {
-    const refreshed = await tryRefreshToken();
-    if (refreshed) {
-      response = await fetch(url, options);
-    }
-  }
-
-  return handleResponse<T>(response);
+  return body as T;
 }
 
 export function get<T>(path: string, signal?: AbortSignal | null): Promise<T> {

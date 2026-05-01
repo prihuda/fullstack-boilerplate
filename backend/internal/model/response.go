@@ -30,10 +30,17 @@ type UserResponse struct {
 
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=6"`
+	Password string `json:"password" validate:"required,min=1"`
+}
+
+// RefreshTokenRequest is used by API clients to send their refresh token in the request body.
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
 type TokenResponse struct {
-	User         UserResponse `json:"user"`
-	CSRFToken    string       `json:"csrf_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	ExpiresAt    string `json:"expires_at"`
 }

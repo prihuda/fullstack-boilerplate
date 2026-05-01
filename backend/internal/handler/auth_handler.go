@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,16 +14,18 @@ import (
 )
 
 type AuthHandler struct {
-	authService  *service.AuthService
-	config       *config.Config
-	cookieSecure bool
+	authService         *service.AuthService
+	config              *config.Config
+	cookieSecure        bool
+	refreshCookieMaxAge int
 }
 
 func NewAuthHandler(authService *service.AuthService, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
-		authService:  authService,
-		config:       cfg,
-		cookieSecure: cfg.CookieSecure,
+		authService:         authService,
+		config:              cfg,
+		cookieSecure:        cfg.CookieSecure,
+		refreshCookieMaxAge: int((7 * 24 * time.Hour).Seconds()),
 	}
 }
 
@@ -36,6 +36,23 @@ func (h *AuthHandler) Routes() chi.Router {
 	r.Post("/logout", h.Logout)
 	r.With(middleware.AuthMiddleware(h.config.JWTSecret)).Get("/me", h.Me)
 	return r
+}
+
+// extractRefreshToken reads the refresh token from cookie first (web browsers),
+// then falls back to JSON body (API clients: mobile, CLI, 3rd party).
+func extractRefreshToken(r *http.Request) (string, error) {
+	// 1. Try cookie first (web browsers — sent automatically)
+	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
+
+	// 2. Try JSON body (API clients without cookies)
+	var req model.RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.RefreshToken != "" {
+		return req.RefreshToken, nil
+	}
+
+	return "", errors.New("refresh token required")
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -54,10 +71,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate CSRF token
-	csrfToken, _ := generateCSRFToken()
+	expiresIn := int(time.Until(result.ExpiresAt).Seconds())
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
 
-	// Set access token cookie — path /api/v1 so it's sent to all API routes
+	// Always set HttpOnly cookies (web browsers use these automatically)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    result.AccessToken,
@@ -65,10 +84,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   15 * 60, // 15 minutes — matches JWT expiry
+		MaxAge:   expiresIn,
 	})
-
-	// Set refresh token cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    result.RefreshToken,
@@ -76,38 +93,26 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		MaxAge:   h.refreshCookieMaxAge,
 	})
 
-	// Set CSRF token in cookie (non-HttpOnly so JS can read it)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf_token",
-		Value:    csrfToken,
-		Path:     "/",
-		HttpOnly: false,
-		Secure:   h.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
-	})
-
+	// Always return tokens in body (API clients: mobile, 3rd party, CLI)
 	writeJSON(w, http.StatusOK, model.TokenResponse{
-		User: model.UserResponse{
-			ID:        result.User.ID,
-			Email:     result.User.Email,
-			Name:      result.User.Name,
-			CreatedAt: result.User.CreatedAt.Format(time.RFC3339),
-		},
-		CSRFToken: csrfToken,
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresIn:    expiresIn,
+		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),
 	})
 }
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("refresh_token")
+	rawRefreshToken, err := extractRefreshToken(r)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "refresh token not found")
+		writeError(w, http.StatusUnauthorized, "MISSING_TOKEN", "refresh token required")
 		return
 	}
 
-	result, err := h.authService.Refresh(r.Context(), cookie.Value)
+	result, err := h.authService.Refresh(r.Context(), rawRefreshToken)
 	if err != nil {
 		if errors.Is(err, service.ErrTokenExpired) {
 			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "refresh token has expired")
@@ -118,6 +123,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, service.ErrTokenReuse) {
+			h.clearAuthCookies(w)
 			writeError(w, http.StatusUnauthorized, "TOKEN_REUSE", "refresh token reuse detected")
 			return
 		}
@@ -125,7 +131,12 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set new access token cookie — path /api/v1 so it's sent to all API routes
+	expiresIn := int(time.Until(result.ExpiresAt).Seconds())
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
+
+	// Set new cookies (web browsers)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    result.AccessToken,
@@ -133,10 +144,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   15 * 60, // 15 minutes — matches JWT expiry
+		MaxAge:   expiresIn,
 	})
-
-	// Set new refresh token cookie (rotation)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    result.RefreshToken,
@@ -144,52 +153,26 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		MaxAge:   h.refreshCookieMaxAge,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "tokens refreshed"})
+	// Always return new tokens in body (API clients)
+	writeJSON(w, http.StatusOK, model.TokenResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresIn:    expiresIn,
+		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),
+	})
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("refresh_token")
+	rawRefreshToken, err := extractRefreshToken(r)
 	if err == nil {
-		_ = h.authService.Logout(r.Context(), cookie.Value)
+		_ = h.authService.Logout(r.Context(), rawRefreshToken)
 	}
 
-	// Clear access token cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
-		Value:    "",
-		Path:     "/api/v1",
-		HttpOnly: true,
-		Secure:   h.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
-
-	// Clear refresh token cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    "",
-		Path:     "/api/v1/auth/refresh",
-		HttpOnly: true,
-		Secure:   h.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
-
-	// Clear CSRF token cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: false,
-		Secure:   h.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+	h.clearAuthCookies(w)
+	writeJSON(w, http.StatusOK, "logged out")
 }
 
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
@@ -233,12 +216,24 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func generateCSRFToken() (string, error) {
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
-	if err != nil {
-		// Fallback to time-based token
-		return time.Now().Format("20060102150405.000000000"), nil
-	}
-	return hex.EncodeToString(b), nil
+// clearAuthCookies sets expired cookies to effectively delete them.
+func (h *AuthHandler) clearAuthCookies(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    "",
+		Path:     "/api/v1",
+		HttpOnly: true,
+		Secure:   h.cookieSecure,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/api/v1/auth/refresh",
+		HttpOnly: true,
+		Secure:   h.cookieSecure,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 }

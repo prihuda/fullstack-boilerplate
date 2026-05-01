@@ -50,6 +50,10 @@ func (c *Config) WriteTimeout() time.Duration {
 	return 15 * time.Second
 }
 
+func (c *Config) ShutdownTimeout() time.Duration {
+	return 30 * time.Second
+}
+
 func (c *Config) AllowedOrigins() []string {
 	if c.CORSAllowedOrigins == "" {
 		return nil
