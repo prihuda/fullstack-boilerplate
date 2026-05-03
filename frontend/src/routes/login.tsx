@@ -8,6 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export const Route = createFileRoute('/login')({
+  head: () => ({
+    meta: [
+      { title: 'Masuk - Boilerplate App' },
+      { name: 'description', content: 'Masuk ke akun Boilerplate App Anda.' },
+    ],
+  }),
   component: LoginPage,
 });
 

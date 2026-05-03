@@ -19,7 +19,7 @@ type RateLimitConfig struct {
 
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		Requests:  100,
+		Requests:  300,
 		Window:    1 * time.Minute,
 		KeyPrefix: "rl:",
 	}
@@ -65,6 +65,13 @@ func isTrustedIP(ipStr string) bool {
 }
 
 func extractIP(r *http.Request) string {
+	// Priority: CF-Connecting-IP (Cloudflare) > X-Real-IP (nginx) > RemoteAddr
+	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Ignore logout errors — clear local state regardless
     }
     setState({ user: null, isLoading: false, isAuthenticated: false });
-    queryClient.clear();
+    queryClient.invalidateQueries({ queryKey: AUTH_KEY });
     await navigate({ to: '/login' });
   }, [navigate, queryClient]);
 

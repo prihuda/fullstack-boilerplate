@@ -5,6 +5,12 @@ import { Button } from '@/components/ui/button';
 import { LogOut, User, Shield, Activity } from 'lucide-react';
 
 export const Route = createFileRoute('/')({
+  head: () => ({
+    meta: [
+      { title: 'Dashboard - Boilerplate App' },
+      { name: 'description', content: 'Dashboard dan ringkasan akun Anda.' },
+    ],
+  }),
   component: DashboardPage,
 });
 
