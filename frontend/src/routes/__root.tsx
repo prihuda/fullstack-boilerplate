@@ -1,5 +1,6 @@
 import { createRootRouteWithContext, HeadContent, Outlet, useRouter } from '@tanstack/react-router';
-import { AuthProvider, useAuth } from '@/hooks/use-auth';
+import { AuthProvider } from '@/contexts/auth-context';
+import { useAuth } from '@/hooks/use-auth';
 import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import type { QueryClient } from '@tanstack/react-query';
 
@@ -49,7 +50,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootLayout,
 });
 
-function RootLayout() {
+export function RootLayout() {
   return (
     <AuthProvider>
       <AuthLoader />

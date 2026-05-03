@@ -1,0 +1,42 @@
+echo "=== Pre-commit Checks ==="
+
+# ── Backend checks ──
+echo "[backend] running go vet..."
+cd backend
+go vet ./...
+if [ $? -ne 0 ]; then
+  echo "❌ go vet failed"
+  exit 1
+fi
+echo "✅ go vet passed"
+
+echo "[backend] checking build..."
+go build ./cmd/server
+if [ $? -ne 0 ]; then
+  echo "❌ go build failed"
+  exit 1
+fi
+echo "✅ go build passed"
+cd ..
+
+# ── Frontend checks ──
+echo "[frontend] running lint-staged..."
+npx lint-staged
+if [ $? -ne 0 ]; then
+  echo "❌ lint-staged failed"
+  exit 1
+fi
+echo "✅ lint-staged passed"
+
+echo "[frontend] running TypeScript check..."
+cd frontend
+npx tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "❌ TypeScript check failed"
+  exit 1
+fi
+echo "✅ TypeScript check passed"
+cd ..
+
+echo ""
+echo "✅ All pre-commit checks passed!"

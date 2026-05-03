@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { createRouter, RouterProvider } from '@tanstack/react-router';
-import { ToastProvider, Toaster } from '@/hooks/use-toast';
+import { ToastProvider } from '@/contexts/toast-context';
+import { Toaster } from '@/components/toaster';
 import { QueryErrorBoundary } from '@/components/layout/query-error-boundary';
 import { routeTree } from './routeTree.gen';
 
