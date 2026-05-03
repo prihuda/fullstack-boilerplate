@@ -36,8 +36,8 @@ func GetUserEmail(r *http.Request) string {
 	return ""
 }
 
-// writeAuthError writes a consistent JSON error response from auth middleware.
-func writeAuthError(w http.ResponseWriter, status int, code, message string) {
+// WriteError writes a consistent JSON error response.
+func WriteError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]any{
@@ -47,6 +47,11 @@ func writeAuthError(w http.ResponseWriter, status int, code, message string) {
 			"message": message,
 		},
 	})
+}
+
+// writeAuthError writes a consistent JSON error response from auth middleware.
+func writeAuthError(w http.ResponseWriter, status int, code, message string) {
+	WriteError(w, status, code, message)
 }
 
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {

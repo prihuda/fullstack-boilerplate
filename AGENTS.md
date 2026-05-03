@@ -79,6 +79,7 @@ Install automatically via `npm install` (prepare script triggers husky). Root `.
 - `backend/internal/sanitize/sanitize.go`: HTML-escapes user input (XSS prevention).
 - `backend/internal/middleware/validate.go`: JSON body validation with `go-playground/validator`, 1MB max body.
 - Dockerfiles use `--mount=type=cache` and `COPY --link` for faster builds. Go binary stripped with `-ldflags="-s -w"`.
+- Frontend Docker uses `entrypoint.sh` to inject `VITE_API_URL` at runtime (not build time), so one image works across environments. Healthcheck pings nginx every 15s.
 - `VITE_API_URL` env var (default `http://localhost:8080/api/v1`). `TOKEN_TYPE` env var (default `Bearer`).
 - `.dockerignore` files in both `backend/` and `frontend/` (exclude server binary, tsbuildinfo, etc.).
 - `KEYDB_ADDR` env var used in `main.go` (default `localhost:6379`). Not in Config struct — set via env directly.
