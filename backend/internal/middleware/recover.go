@@ -29,11 +29,13 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 
-					resp := model.NewErrorResponse("INTERNAL_ERROR", "An internal error occurred")
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"success": false,
-						"error":   resp,
-					})
+					json.NewEncoder(w).Encode(map[string]any{
+					"success": false,
+					"error": model.ErrorResponse{
+						Code:    "INTERNAL_ERROR",
+						Message: "An internal error occurred",
+					},
+				})
 				}
 			}()
 

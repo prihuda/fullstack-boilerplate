@@ -84,9 +84,9 @@ func writeValidationErr(w http.ResponseWriter, status int, code string, message 
 
 	var errResp any
 	if len(details) > 0 && len(details[0]) > 0 {
-		errResp = model.NewValidationError(code, message, details[0])
+		errResp = model.ValidationError{Code: code, Message: message, Details: details[0]}
 	} else {
-		errResp = model.NewErrorResponse(code, message)
+		errResp = model.ErrorResponse{Code: code, Message: message}
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{
