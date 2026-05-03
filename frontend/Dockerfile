@@ -3,9 +3,10 @@ FROM node:24-trixie AS build
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci --prefer-offline
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline
 
-COPY . .
+COPY --link . .
 RUN npm run build
 
 FROM nginx:stable-trixie

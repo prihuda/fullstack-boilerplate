@@ -99,6 +99,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Always return tokens in body (API clients: mobile, 3rd party, CLI)
 	writeJSON(w, http.StatusOK, model.TokenResponse{
 		AccessToken:  result.AccessToken,
+		TokenType:    h.config.TokenType,
 		RefreshToken: result.RefreshToken,
 		ExpiresIn:    expiresIn,
 		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),
@@ -159,6 +160,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Always return new tokens in body (API clients)
 	writeJSON(w, http.StatusOK, model.TokenResponse{
 		AccessToken:  result.AccessToken,
+		TokenType:    h.config.TokenType,
 		RefreshToken: result.RefreshToken,
 		ExpiresIn:    expiresIn,
 		ExpiresAt:    result.ExpiresAt.Format(time.RFC3339),

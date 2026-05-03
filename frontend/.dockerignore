@@ -3,3 +3,4 @@ dist
 .tanstack
 .git
 *.md
+*.tsbuildinfo

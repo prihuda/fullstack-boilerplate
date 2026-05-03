@@ -96,11 +96,9 @@ async function doRequest<T>(
     timeoutId = setTimeout(() => controller!.abort(), MUTATION_TIMEOUT);
   }
 
-  const signals = [signal, controller?.signal].filter(Boolean);
+  const signals = [signal, controller?.signal].filter((s): s is AbortSignal => s != null);
   const combinedSignal = signals.length > 0
-    ? (AbortSignal as any).any
-      ? (AbortSignal as any).any(signals)
-      : signals[0]
+    ? AbortSignal.any(signals)
     : undefined;
 
   try {

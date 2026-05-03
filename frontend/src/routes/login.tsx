@@ -8,10 +8,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export const Route = createFileRoute('/login')({
+  head: () => ({
+    meta: [
+      { title: 'Masuk - Boilerplate App' },
+      { name: 'description', content: 'Masuk ke akun Boilerplate App Anda.' },
+    ],
+  }),
   component: LoginPage,
 });
 
-function LoginPage() {
+export function LoginPage() {
   const { isAuthenticated, login } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();

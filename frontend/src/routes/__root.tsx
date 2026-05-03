@@ -1,5 +1,6 @@
-import { createRootRouteWithContext, Outlet, useRouter } from '@tanstack/react-router';
-import { AuthProvider, useAuth } from '@/hooks/use-auth';
+import { createRootRouteWithContext, HeadContent, Outlet, useRouter } from '@tanstack/react-router';
+import { AuthProvider } from '@/contexts/auth-context';
+import { useAuth } from '@/hooks/use-auth';
 import { useIdleTimeout } from '@/hooks/use-idle-timeout';
 import type { QueryClient } from '@tanstack/react-query';
 
@@ -26,14 +27,30 @@ function AuthLoader() {
     return null;
   }
 
-  return <Outlet />;
+  return (
+    <>
+      <HeadContent />
+      <Outlet />
+    </>
+  );
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
+  head: () => ({
+    meta: [
+      { charSet: 'UTF-8' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
+      { title: 'Boilerplate App' },
+      { name: 'description', content: 'Aplikasi full-stack boilerplate dengan autentikasi dan dashboard.' },
+    ],
+    links: [
+      { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+    ],
+  }),
   component: RootLayout,
 });
 
-function RootLayout() {
+export function RootLayout() {
   return (
     <AuthProvider>
       <AuthLoader />

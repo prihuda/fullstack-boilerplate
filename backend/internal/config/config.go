@@ -15,6 +15,7 @@ type Config struct {
 	CORSAllowedOrigins string
 	LogLevel          string
 	CookieSecure      bool
+	TokenType         string
 }
 
 func Load() *Config {
@@ -35,6 +36,7 @@ func Load() *Config {
 		CORSAllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		CookieSecure:      cookieSecure,
+		TokenType:         getEnv("TOKEN_TYPE", "Bearer"),
 	}
 }
 

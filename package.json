@@ -1,0 +1,16 @@
+{
+  "name": "fullstack-boilerplate",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
+  },
+  "lint-staged": {
+    "frontend/**/*.{ts,tsx}": [
+      "node frontend/node_modules/eslint/bin/eslint.js --fix"
+    ]
+  }
+}

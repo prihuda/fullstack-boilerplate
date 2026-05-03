@@ -12,6 +12,7 @@ export interface LoginRequest {
 
 export interface TokenResponse {
   access_token: string;
+  token_type: string;
   refresh_token: string;
   expires_in: number;
   expires_at: string;
