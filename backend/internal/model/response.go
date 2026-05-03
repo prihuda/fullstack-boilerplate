@@ -38,6 +38,16 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
+// NewErrorResponse creates an ErrorResponse with the given code and message.
+func NewErrorResponse(code, message string) ErrorResponse {
+	return ErrorResponse{Code: code, Message: message}
+}
+
+// NewValidationError creates a ValidationError with code, message, and field-level details.
+func NewValidationError(code, message string, details map[string]string) ValidationError {
+	return ValidationError{Code: code, Message: message, Details: details}
+}
+
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`

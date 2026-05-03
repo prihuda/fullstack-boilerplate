@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,61 +12,72 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type RateLimitConfig struct {
-	Requests  int
-	Window    time.Duration
-	KeyPrefix string
+// DefaultTrustedCIDRs are private/Docker IP ranges that bypass rate limiting.
+var DefaultTrustedCIDRs = []string{
+	"127.0.0.1/8",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"::1/128",
+	"fc00::/7",
 }
 
-func DefaultRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{
-		Requests:  300,
-		Window:    1 * time.Minute,
-		KeyPrefix: "rl:",
+// RateLimiterConfig holds rate limiting configuration.
+type RateLimiterConfig struct {
+	Requests    int
+	Window      time.Duration
+	KeyPrefix   string
+	TrustedCIDRs []string
+}
+
+// RateLimiter manages rate limiting via Redis.
+type RateLimiter struct {
+	client       *redis.Client
+	config       RateLimiterConfig
+	trustedCIDRs []*net.IPNet
+}
+
+// NewRateLimiter creates a new rate limiter backed by Redis.
+func NewRateLimiter(client *redis.Client, config RateLimiterConfig) *RateLimiter {
+	if config.KeyPrefix == "" {
+		config.KeyPrefix = "ratelimit:"
+	}
+
+	cidrStrings := config.TrustedCIDRs
+	if len(cidrStrings) == 0 {
+		cidrStrings = DefaultTrustedCIDRs
+	}
+	var trustedCIDRs []*net.IPNet
+	for _, c := range cidrStrings {
+		_, cidr, err := net.ParseCIDR(c)
+		if err == nil {
+			trustedCIDRs = append(trustedCIDRs, cidr)
+		}
+	}
+
+	return &RateLimiter{
+		client:       client,
+		config:       config,
+		trustedCIDRs: trustedCIDRs,
 	}
 }
 
-// AuthRateLimitConfig returns a stricter rate limit config for auth routes.
-func AuthRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{
-		Requests:  30,
-		Window:    1 * time.Minute,
-		KeyPrefix: "rl-auth:",
-	}
-}
-
-var trustedCIDRs = []*net.IPNet{
-	parseCIDR("127.0.0.1/8"),
-	parseCIDR("10.0.0.0/8"),
-	parseCIDR("172.16.0.0/12"),
-	parseCIDR("192.168.0.0/16"),
-	parseCIDR("::1/128"),
-	parseCIDR("fc00::/7"),
-}
-
-func parseCIDR(s string) *net.IPNet {
-	_, cidr, err := net.ParseCIDR(s)
-	if err != nil {
-		return nil
-	}
-	return cidr
-}
-
-func isTrustedIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
+func (rl *RateLimiter) isTrustedIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
 		return false
 	}
-	for _, cidr := range trustedCIDRs {
-		if cidr != nil && cidr.Contains(ip) {
+	for _, cidr := range rl.trustedCIDRs {
+		if cidr.Contains(parsed) {
 			return true
 		}
 	}
 	return false
 }
 
-func extractIP(r *http.Request) string {
-	// Priority: CF-Connecting-IP (Cloudflare) > X-Real-IP (nginx) > RemoteAddr
+// extractClientIP extracts the real client IP for rate limiting.
+// Priority: CF-Connecting-IP (Cloudflare) > X-Real-IP (nginx) > RemoteAddr.
+func extractClientIP(r *http.Request) string {
 	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
 		return ip
 	}
@@ -79,70 +91,96 @@ func extractIP(r *http.Request) string {
 	return host
 }
 
-func RateLimiter(rdb redis.Cmdable, cfg RateLimitConfig) func(http.Handler) http.Handler {
+// Middleware returns a chi middleware that rate limits requests by IP.
+func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := extractIP(r)
+			ip := extractClientIP(r)
 
-			if isTrustedIP(ip) {
+			if rl.isTrustedIP(ip) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			ctx := r.Context()
-			now := float64(time.Now().UnixMilli())
-			windowStart := now - float64(cfg.Window.Milliseconds())
-			key := cfg.KeyPrefix + ip
-
-			// Step 1: Clean old entries outside the window
-			zrem := rdb.ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%f", windowStart))
-			if zrem.Err() != nil {
-				slog.Error("rate limiter zrem failed", "error", zrem.Err())
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Step 2: Count current entries in the window
-			count, err := rdb.ZCard(ctx, key).Result()
+			key := rl.config.KeyPrefix + ip
+			allowed, remaining, reset, err := rl.Allow(r.Context(), key)
 			if err != nil {
-				slog.Error("rate limiter zcard failed", "error", err)
+				// If Redis fails, allow the request (fail-open)
+				slog.Error("rate limiter failed", "error", err)
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Step 3: Check if over limit BEFORE adding
-			if count >= int64(cfg.Requests) {
-				resetAt := time.Now().Add(cfg.Window).Unix()
-				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(cfg.Requests))
-				w.Header().Set("X-RateLimit-Remaining", "0")
-				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))
-				retryAfter := cfg.Window.Seconds()
-				w.Header().Set("Retry-After", strconv.FormatFloat(retryAfter, 'f', 0, 64))
-				http.Error(w, `{"code":"RATE_LIMITED","message":"too many requests"}`, http.StatusTooManyRequests)
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.Requests))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+
+			if !allowed {
+				WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests. Please try again later.")
 				return
 			}
-
-			// Step 4: Under limit — add entry with unique member to avoid dedup
-			member := fmt.Sprintf("%d:%f", time.Now().UnixNano(), now)
-			if err := rdb.ZAdd(ctx, key, redis.Z{Score: now, Member: member}).Err(); err != nil {
-				slog.Error("rate limiter zadd failed", "error", err)
-			}
-
-			remaining := cfg.Requests - int(count) - 1
-			if remaining < 0 {
-				remaining = 0
-			}
-
-			resetAt := time.Now().Add(cfg.Window).Unix()
-
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(cfg.Requests))
-			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetAt, 10))
-
-			// Set expiry on the key
-			rdb.Expire(ctx, key, cfg.Window+time.Second)
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// Allow checks if a request is allowed under the rate limit using a sliding window.
+// Only adds the request to the window if allowed (prevents memory leak from rejected requests).
+func (rl *RateLimiter) Allow(ctx context.Context, key string) (bool, int, time.Time, error) {
+	now := time.Now()
+	windowStart := now.Add(-rl.config.Window)
+
+	pipe := rl.client.TxPipeline()
+
+	// Remove expired entries
+	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart.UnixNano(), 10))
+
+	// Count current requests
+	countCmd := pipe.ZCard(ctx, key)
+
+	// Set expiry on the key
+	pipe.Expire(ctx, key, rl.config.Window*2)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return false, 0, now, err
+	}
+
+	count := countCmd.Val()
+	allowed := int(count) < rl.config.Requests
+
+	if allowed {
+		// Only add the request if allowed — prevents memory leak from rejected requests
+		err = rl.client.ZAdd(ctx, key, redis.Z{
+			Score:  float64(now.UnixNano()),
+			Member: fmt.Sprintf("%d:%d", now.UnixNano(), now.UnixMilli()),
+		}).Err()
+		if err != nil {
+			return false, 0, now, err
+		}
+	}
+
+	remaining := rl.config.Requests - int(count) - 1
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return allowed, remaining, now.Add(rl.config.Window), nil
+}
+
+func DefaultRateLimitConfig() RateLimiterConfig {
+	return RateLimiterConfig{
+		Requests:  300,
+		Window:    1 * time.Minute,
+		KeyPrefix: "ratelimit:",
+	}
+}
+
+func AuthRateLimitConfig() RateLimiterConfig {
+	return RateLimiterConfig{
+		Requests:  30,
+		Window:    1 * time.Minute,
+		KeyPrefix: "ratelimit-auth:",
 	}
 }

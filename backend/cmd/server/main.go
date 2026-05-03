@@ -91,10 +91,13 @@ func main() {
 	// Build router
 	r := chi.NewRouter()
 
-	// Global middleware
-	r.Use(middleware.Recoverer)
+	// Global middleware — RequestID/RealIP/CleanPath first for downstream middleware
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.CleanPath)
+	r.Use(authmw.Recover(logger))
 	r.Use(authmw.Logger(logger))
-	r.Use(authmw.SecurityHeaders)
+	r.Use(authmw.SecurityHeaders())
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -102,13 +105,11 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 
 	// Global rate limiter (Redis-backed)
 	if rdb.Ping(ctx).Err() == nil {
 		rlCfg := authmw.DefaultRateLimitConfig()
-		r.Use(authmw.RateLimiter(rdb, rlCfg))
+		r.Use(authmw.NewRateLimiter(rdb, rlCfg).Middleware())
 	}
 
 	// Routes
@@ -117,11 +118,19 @@ func main() {
 			// Stricter rate limit for auth routes
 			if rdb.Ping(ctx).Err() == nil {
 				authRLCfg := authmw.AuthRateLimitConfig()
-				r.Use(authmw.RateLimiter(rdb, authRLCfg))
+				r.Use(authmw.NewRateLimiter(rdb, authRLCfg).Middleware())
 			}
 			r.Mount("/", authHandler.Routes())
 		})
 		r.Get("/health", healthHandler.ServeHTTP)
+	})
+
+	// Custom 404/405 handlers for consistent JSON API responses
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		authmw.WriteError(w, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		authmw.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
 	})
 
 	// Create HTTP server

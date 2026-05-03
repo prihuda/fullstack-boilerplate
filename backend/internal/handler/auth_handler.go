@@ -56,8 +56,8 @@ func extractRefreshToken(r *http.Request) (string, error) {
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	req, ok := middleware.ValidateRequest[model.LoginRequest](w, r)
-	if !ok {
+	req := middleware.ValidateRequest[model.LoginRequest](w, r)
+	if req == nil {
 		return
 	}
 
