@@ -190,13 +190,21 @@ func (s *AuthService) GetUser(ctx context.Context, userID string) (*model.User, 
 	return s.userRepo.GetByID(ctx, userID)
 }
 
+type accessTokenClaims struct {
+	UserID string `json:"sub"`
+	Email  string `json:"email"`
+	jwt.RegisteredClaims
+}
+
 func (s *AuthService) generateAccessToken(userID, email string) (string, error) {
 	now := time.Now()
-	claims := jwt.MapClaims{
-		"sub":   userID,
-		"email": email,
-		"iat":   now.Unix(),
-		"exp":   now.Add(15 * time.Minute).Unix(),
+	claims := accessTokenClaims{
+		UserID: userID,
+		Email:  email,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
+		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

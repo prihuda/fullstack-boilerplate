@@ -49,11 +49,6 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-// writeAuthError writes a consistent JSON error response from auth middleware.
-func writeAuthError(w http.ResponseWriter, status int, code, message string) {
-	WriteError(w, status, code, message)
-}
-
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +70,7 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 			}
 
 			if tokenStr == "" {
-				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authentication token")
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authentication token")
 				return
 			}
 
@@ -89,12 +84,12 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 				return []byte(secret), nil
 			})
 			if err != nil || !token.Valid {
-				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired token")
 				return
 			}
 
 			if claims.UserID == "" {
-				writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid token subject")
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid token subject")
 				return
 			}
 

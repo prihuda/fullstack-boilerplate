@@ -36,7 +36,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 						Message: "An internal error occurred",
 					},
 				})
-				}
+			}
 			}()
 
 			next.ServeHTTP(w, r)
