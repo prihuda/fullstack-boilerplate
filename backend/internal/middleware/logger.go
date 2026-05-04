@@ -44,21 +44,20 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 				duration := time.Since(start)
 				msg := r.Method + " " + r.URL.Path
 
-			attrs := []slog.Attr{
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-				slog.Int("status", rec.statusCode),
-				slog.Int64("duration_ms", duration.Milliseconds()),
-				slog.String("remote_addr", r.RemoteAddr),
-				slog.Int("bytes_written", rec.written),
-			}
+				attrs := []slog.Attr{
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.Int("status", rec.statusCode),
+					slog.Int64("duration_ms", duration.Milliseconds()),
+					slog.String("remote_addr", r.RemoteAddr),
+					slog.Int("bytes_written", rec.written),
+				}
 
-			if reqID := chimw.GetReqID(r.Context()); reqID != "" {
-				attrs = append(attrs, slog.String("request_id", reqID))
-			}
+				if reqID := chimw.GetReqID(r.Context()); reqID != "" {
+					attrs = append(attrs, slog.String("request_id", reqID))
+				}
 
-			// Include user_id if authenticated
-			if userID := GetUserID(r); userID != "" {
+				if userID := GetUserID(r); userID != "" {
 					attrs = append(attrs, slog.String("user_id", userID))
 				}
 
