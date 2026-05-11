@@ -30,15 +30,23 @@ var (
 // when user is not found, preventing email enumeration via timing attacks.
 var dummyHash = "$2a$12$00000000000000000000000000000000000000000000000000000"
 
+// AuthServicer defines the interface for authentication service operations.
+type AuthServicer interface {
+	Login(ctx context.Context, email, password string) (*LoginResult, error)
+	Refresh(ctx context.Context, rawToken string) (*RefreshResult, error)
+	Logout(ctx context.Context, rawToken string) error
+	GetUser(ctx context.Context, userID string) (*model.User, error)
+}
+
 type AuthService struct {
-	userRepo         *repository.UserRepository
-	refreshTokenRepo *repository.RefreshTokenRepository
+	userRepo         repository.UserRepo
+	refreshTokenRepo repository.RefreshTokenRepo
 	jwtSecret        string
 }
 
 func NewAuthService(
-	userRepo *repository.UserRepository,
-	refreshTokenRepo *repository.RefreshTokenRepository,
+	userRepo repository.UserRepo,
+	refreshTokenRepo repository.RefreshTokenRepo,
 	jwtSecret string,
 ) *AuthService {
 	return &AuthService{

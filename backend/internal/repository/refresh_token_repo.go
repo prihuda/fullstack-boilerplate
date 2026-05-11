@@ -9,6 +9,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// RefreshTokenRepo defines the interface for refresh token repository operations.
+type RefreshTokenRepo interface {
+	Create(ctx context.Context, token *model.RefreshToken) error
+	GetByTokenHash(ctx context.Context, hash string) (*model.RefreshToken, error)
+	DeleteByTokenHash(ctx context.Context, tokenHash string) error
+	RevokeAllForUser(ctx context.Context, userID string) error
+	Rotate(ctx context.Context, oldTokenHash string, newToken *model.RefreshToken) (bool, error)
+}
+
 var ErrTokenReuse = errors.New("refresh token reuse detected")
 
 type RefreshTokenRepository struct {

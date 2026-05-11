@@ -127,7 +127,7 @@ async function doRequest<T>(
     return handleResponse<T>(response);
   } catch (err) {
     if (err instanceof ApiClientError) throw err;
-    if (timeoutId !== undefined && err instanceof DOMException && err.name === 'AbortError') {
+    if (timeoutId !== undefined && err instanceof Error && err.name === 'AbortError') {
       throw new ApiClientError('TIMEOUT', 'Request timed out after 30 seconds');
     }
     throw new ApiClientError('NETWORK_ERROR', 'Unable to connect to the server. Please check your connection.');
