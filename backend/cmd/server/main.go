@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/docgen"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/rhuda/fullstack-boilerplate/backend/internal/config"
@@ -51,7 +52,7 @@ func main() {
 
 	// Connect to Redis
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     getEnv("KEYDB_ADDR", "localhost:6379"),
+		Addr:     config.GetEnv("KEYDB_ADDR", "localhost:6379"),
 		Password: os.Getenv("REDIS_PASSWORD"),
 		DB:       0,
 	})
@@ -66,17 +67,29 @@ func main() {
 	userRepo := repository.NewUserRepository(db.BunDB)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db.BunDB)
 
+	// Background context for goroutines — cancelled on shutdown
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+
 	// Periodic refresh token cleanup (expired + revoked)
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
+		defer func() {
+			if err := recover(); err != nil {
+				slog.Error("cleanup goroutine panicked", "error", err)
+			}
+		}()
 		for {
 			select {
+			case <-bgCtx.Done():
+				slog.Info("cleanup goroutine stopped")
+				return
 			case <-ticker.C:
-				cleanupCtx := context.Background()
+				cleanupCtx, cleanupCancel := context.WithTimeout(bgCtx, 30*time.Second)
 				if err := refreshTokenRepo.DeleteExpiredAndRevoked(cleanupCtx, db.BunDB); err != nil {
 					slog.Warn("failed to clean up expired tokens", "error", err)
 				}
+				cleanupCancel()
 			}
 		}
 	}()
@@ -125,12 +138,20 @@ func main() {
 		r.Get("/health", healthHandler.ServeHTTP)
 	})
 
+	// Pre-compute API docs before registering the endpoint (avoids self-referencing)
+	jsonDocs := docgen.JSONRoutesDoc(r)
+
+	r.Get("/docs/json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(jsonDocs))
+	})
+
 	// Custom 404/405 handlers for consistent JSON API responses
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		authmw.WriteError(w, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found")
+		authmw.WriteError(w, r, http.StatusNotFound, "NOT_FOUND", "The requested resource was not found")
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		authmw.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
+		authmw.WriteError(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
 	})
 
 	// Create HTTP server
@@ -157,6 +178,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	slog.Info("shutting down server", "signal", sig.String())
+
+	// Stop background goroutines
+	bgCancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout())
 	defer shutdownCancel()
@@ -185,11 +209,4 @@ func setupLogger(level string) *slog.Logger {
 		Level: lvl,
 	})
 	return slog.New(handler)
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

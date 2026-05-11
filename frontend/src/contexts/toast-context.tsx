@@ -1,8 +1,8 @@
 import {
   createContext,
   useCallback,
+  useRef,
   useState,
-  useEffect,
   type ReactNode,
 } from 'react';
 
@@ -26,28 +26,23 @@ const TOAST_DURATION = 4000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+    const timer = timerRefs.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timerRefs.current.delete(id);
+    }
   }, []);
 
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
     const id = crypto.randomUUID();
-    setToasts((prev) => [...prev, { id, message, type }]);
-  }, []);
-
-  // Auto-remove toasts after duration
-  useEffect(() => {
-    if (toasts.length === 0) return;
-
-    const timers = toasts.map((toast) =>
-      setTimeout(() => removeToast(toast.id), TOAST_DURATION),
-    );
-
-    return () => {
-      timers.forEach(clearTimeout);
-    };
-  }, [toasts, removeToast]);
+    setToasts((prev) => [...prev.slice(-4), { id, message, type }]);
+    const timer = setTimeout(() => removeToast(id), TOAST_DURATION);
+    timerRefs.current.set(id, timer);
+  }, [removeToast]);
 
   return (
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>

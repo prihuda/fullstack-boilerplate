@@ -12,6 +12,8 @@ export const Route = createFileRoute('/login')({
     meta: [
       { title: 'Masuk - Boilerplate App' },
       { name: 'description', content: 'Masuk ke akun Boilerplate App Anda.' },
+      { property: 'og:title', content: 'Masuk - Boilerplate App' },
+      { name: 'twitter:title', content: 'Masuk - Boilerplate App' },
     ],
   }),
   component: LoginPage,
@@ -31,7 +33,6 @@ export function LoginPage() {
       try {
         await login(value.email, value.password);
         addToast('Login successful', 'success');
-        await navigate({ to: '/' });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Login failed';
         addToast(message, 'error');
@@ -140,16 +141,10 @@ export function LoginPage() {
                 <Button
                   type="submit"
                   className="w-full"
-                  disabled={!canSubmit || isSubmitting}
+                  disabled={!canSubmit}
+                  isLoading={isSubmitting}
                 >
-                  {isSubmitting ? (
-                    <>
-                      <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                      Signing in...
-                    </>
-                  ) : (
-                    'Sign In'
-                  )}
+                  Sign In
                 </Button>
               )}
             </form.Subscribe>

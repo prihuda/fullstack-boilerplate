@@ -62,7 +62,7 @@ export async function request<T>(
   const key = `${method}:${url}`;
 
   // Deduplicate concurrent GET requests to the same URL
-  if (method === 'GET' && pendingRequests.has(key)) {
+  if (method === 'GET' && !signal && pendingRequests.has(key)) {
     return pendingRequests.get(key) as Promise<T>;
   }
 
@@ -125,6 +125,12 @@ async function doRequest<T>(
     }
 
     return handleResponse<T>(response);
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    if (timeoutId !== undefined && err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiClientError('TIMEOUT', 'Request timed out after 30 seconds');
+    }
+    throw new ApiClientError('NETWORK_ERROR', 'Unable to connect to the server. Please check your connection.');
   } finally {
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId);
@@ -155,12 +161,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
     return undefined as T;
   }
 
-  const body = await response.json();
-  // Unwrap from { success, data } envelope
-  if (body && typeof body === 'object' && 'data' in body) {
-    return body.data as T;
+  try {
+    const body = await response.json();
+    // Unwrap from { success, data } envelope
+    if (body && typeof body === 'object' && 'data' in body) {
+      return body.data as T;
+    }
+    return body as T;
+  } catch {
+    throw new ApiClientError('PARSE_ERROR', 'Invalid JSON in response body');
   }
-  return body as T;
 }
 
 export function get<T>(path: string, signal?: AbortSignal | null): Promise<T> {

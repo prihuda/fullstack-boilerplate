@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -40,7 +41,9 @@ func (h *AuthHandler) Routes() chi.Router {
 
 // extractRefreshToken reads the refresh token from cookie first (web browsers),
 // then falls back to JSON body (API clients: mobile, CLI, 3rd party).
-func extractRefreshToken(r *http.Request) (string, error) {
+func extractRefreshToken(w http.ResponseWriter, r *http.Request) (string, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+
 	// 1. Try cookie first (web browsers — sent automatically)
 	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
 		return cookie.Value, nil
@@ -64,10 +67,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	result, err := h.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidCredentials) {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
+			middleware.WriteError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid email or password")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "authentication failed")
+		slog.Error("login failed", "error", err)
+		middleware.WriteError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "authentication failed")
 		return
 	}
 
@@ -97,7 +101,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Always return tokens in body (API clients: mobile, 3rd party, CLI)
-	writeJSON(w, http.StatusOK, model.TokenResponse{
+	writeJSON(w, r, http.StatusOK, model.TokenResponse{
 		AccessToken:  result.AccessToken,
 		TokenType:    h.config.TokenType,
 		RefreshToken: result.RefreshToken,
@@ -107,28 +111,28 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	rawRefreshToken, err := extractRefreshToken(r)
+	rawRefreshToken, err := extractRefreshToken(w, r)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "MISSING_TOKEN", "refresh token required")
+		middleware.WriteError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "missing refresh token")
 		return
 	}
 
 	result, err := h.authService.Refresh(r.Context(), rawRefreshToken)
 	if err != nil {
 		if errors.Is(err, service.ErrTokenExpired) {
-			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", "refresh token has expired")
+			middleware.WriteError(w, r, http.StatusUnauthorized, "TOKEN_EXPIRED", "refresh token has expired")
 			return
 		}
 		if errors.Is(err, service.ErrTokenInvalid) || errors.Is(err, service.ErrUserNotFound) {
-			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid refresh token")
+			middleware.WriteError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid refresh token")
 			return
 		}
 		if errors.Is(err, service.ErrTokenReuse) {
 			h.clearAuthCookies(w)
-			writeError(w, http.StatusUnauthorized, "TOKEN_REUSE", "refresh token reuse detected")
+			middleware.WriteError(w, r, http.StatusUnauthorized, "TOKEN_REUSE", "refresh token reuse detected")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "token refresh failed")
+		middleware.WriteError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "token refresh failed")
 		return
 	}
 
@@ -158,7 +162,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Always return new tokens in body (API clients)
-	writeJSON(w, http.StatusOK, model.TokenResponse{
+	writeJSON(w, r, http.StatusOK, model.TokenResponse{
 		AccessToken:  result.AccessToken,
 		TokenType:    h.config.TokenType,
 		RefreshToken: result.RefreshToken,
@@ -168,29 +172,31 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	rawRefreshToken, err := extractRefreshToken(r)
+	rawRefreshToken, err := extractRefreshToken(w, r)
 	if err == nil {
-		_ = h.authService.Logout(r.Context(), rawRefreshToken)
+		if err := h.authService.Logout(r.Context(), rawRefreshToken); err != nil {
+			slog.WarnContext(r.Context(), "logout revocation failed", "error", err)
+		}
 	}
 
 	h.clearAuthCookies(w)
-	writeJSON(w, http.StatusOK, "logged out")
+	writeJSON(w, r, http.StatusOK, "logged out")
 }
 
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	if userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not found in context")
+		middleware.WriteError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "user not found in context")
 		return
 	}
 
 	user, err := h.authService.GetUser(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "user not found")
+		middleware.WriteError(w, r, http.StatusNotFound, "NOT_FOUND", "user not found")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, model.UserResponse{
+	writeJSON(w, r, http.StatusOK, model.UserResponse{
 		ID:        user.ID,
 		Email:     user.Email,
 		Name:      user.Name,
@@ -199,23 +205,12 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeJSON writes a success response with {"success":true,"data":...} envelope.
-func writeJSON(w http.ResponseWriter, status int, data any) {
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(model.APIResponse[any]{Success: true, Data: data})
-}
-
-// writeError writes an error response with {"success":false,"error":{...}} envelope.
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
-		"success": false,
-		"error": map[string]string{
-			"code":    code,
-			"message": message,
-		},
-	})
+	if err := json.NewEncoder(w).Encode(model.APIResponse[any]{Success: true, Data: data}); err != nil {
+		slog.ErrorContext(r.Context(), "failed to encode response", "error", err)
+	}
 }
 
 // clearAuthCookies sets expired cookies to effectively delete them.

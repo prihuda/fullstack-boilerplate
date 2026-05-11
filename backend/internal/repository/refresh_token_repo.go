@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/rhuda/fullstack-boilerplate/backend/internal/model"
 	"github.com/uptrace/bun"
@@ -61,38 +60,37 @@ func (r *RefreshTokenRepository) DeleteByUserID(ctx context.Context, userID stri
 	return nil
 }
 
-// Rotate replaces an old refresh token with a new one using theft detection.
-// It sets replaced_by on the old token atomically (WHERE replaced_by IS NULL).
-// If the old token was already replaced (theft), it revokes all tokens for the
-// user outside the transaction so revocation persists even on error return.
-func (r *RefreshTokenRepository) Rotate(ctx context.Context, oldTokenHash string, newToken *model.RefreshToken) error {
-	result, err := r.db.NewUpdate().
-		Model((*model.RefreshToken)(nil)).
-		Set("replaced_by = ?", newToken.ID).
-		Where("token_hash = ? AND replaced_by IS NULL", oldTokenHash).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to mark old token as replaced: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		// Token was already replaced — theft detected.
-		// Revoke all tokens outside any transaction so revocation persists.
-		if revokeErr := r.RevokeAllForUser(ctx, newToken.UserID); revokeErr != nil {
-			slog.Error("failed to revoke tokens after theft detection",
-				"error", revokeErr,
-				"user_id", newToken.UserID,
-			)
+// Rotate replaces an old refresh token with a new one atomically.
+// It sets replaced_by on the old token (WHERE replaced_by IS NULL) and inserts
+// the new token in a single transaction to prevent TOCTOU races.
+func (r *RefreshTokenRepository) Rotate(ctx context.Context, oldTokenHash string, newToken *model.RefreshToken) (bool, error) {
+	var replaced bool
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().
+			Model((*model.RefreshToken)(nil)).
+			Set("replaced_by = ?", newToken.ID).
+			Where("token_hash = ?", oldTokenHash).
+			Where("replaced_by IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("refresh token reuse detected: %s: %w", oldTokenHash[:8], ErrTokenReuse)
-	}
-
-	_, err = r.db.NewInsert().Model(newToken).Exec(ctx)
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			replaced = false
+			return nil
+		}
+		replaced = true
+		_, err = tx.NewInsert().Model(newToken).Exec(ctx)
+		return err
+	})
 	if err != nil {
-		return fmt.Errorf("failed to create new refresh token: %w", err)
+		return false, fmt.Errorf("rotate token: %w", err)
 	}
-	return nil
+	return replaced, nil
 }
 
 // RevokeAllForUser revokes all active (non-revoked) refresh tokens for a user.

@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"time"
 
+	"database/sql"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/rhuda/fullstack-boilerplate/backend/internal/model"
 	"github.com/rhuda/fullstack-boilerplate/backend/internal/repository"
@@ -26,7 +28,7 @@ var (
 
 // dummyHash is a valid bcrypt hash used for constant-time comparison
 // when user is not found, preventing email enumeration via timing attacks.
-var dummyHash = "$2a$10$00000000000000000000000000000000000000000000000000000"
+var dummyHash = "$2a$12$00000000000000000000000000000000000000000000000000000"
 
 type AuthService struct {
 	userRepo         *repository.UserRepository
@@ -56,10 +58,13 @@ type LoginResult struct {
 func (s *AuthService) Login(ctx context.Context, email, password string) (*LoginResult, error) {
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		// Prevent user enumeration via timing attack — perform dummy bcrypt comparison
-		// so response time is indistinguishable from a real password check
-		_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(password))
-		return nil, ErrInvalidCredentials
+		if errors.Is(err, sql.ErrNoRows) {
+			// Prevent user enumeration via timing attack — perform dummy bcrypt comparison
+			// so response time is indistinguishable from a real password check
+			_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(password))
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("get user by email: %w", err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
@@ -78,8 +83,13 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 
 	tokenHash := hashToken(rawRefreshToken)
 
+	tokenID, err := generateUUID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token ID: %w", err)
+	}
+
 	refreshToken := &model.RefreshToken{
-		ID:        generateUUID(),
+		ID:        tokenID,
 		UserID:    user.ID,
 		TokenHash: tokenHash,
 		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
@@ -155,23 +165,35 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*RefreshRes
 	}
 
 	newTokenHash := hashToken(newRawToken)
+	newTokenID, err := generateUUID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token ID: %w", err)
+	}
 	newRefreshToken := &model.RefreshToken{
-		ID:        generateUUID(),
+		ID:        newTokenID,
 		UserID:    storedToken.UserID,
 		TokenHash: newTokenHash,
 		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
 		CreatedAt: time.Now(),
 	}
 
-	if err := s.refreshTokenRepo.Rotate(ctx, tokenHash, newRefreshToken); err != nil {
-		if errors.Is(err, repository.ErrTokenReuse) {
-			slog.Warn("refresh token reuse detected during rotation — possible token theft",
-				"user_id", storedToken.UserID,
-				"token_hash_prefix", tokenHash[:8],
-			)
-			return nil, ErrTokenReuse
-		}
+	replaced, err := s.refreshTokenRepo.Rotate(ctx, tokenHash, newRefreshToken)
+	if err != nil {
 		return nil, fmt.Errorf("failed to rotate refresh token: %w", err)
+	}
+	if !replaced {
+		// Token was already replaced — theft detected.
+		if revokeErr := s.refreshTokenRepo.RevokeAllForUser(ctx, storedToken.UserID); revokeErr != nil {
+			slog.Error("failed to revoke tokens after theft detection",
+				"error", revokeErr,
+				"user_id", storedToken.UserID,
+			)
+		}
+		slog.Warn("refresh token reuse detected during rotation — possible token theft",
+			"user_id", storedToken.UserID,
+			"token_hash_prefix", tokenHash[:8],
+		)
+		return nil, ErrTokenReuse
 	}
 
 	return &RefreshResult{
@@ -224,11 +246,13 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func generateUUID() string {
+func generateUUID() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate UUID: %w", err)
+	}
 	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

@@ -1,4 +1,4 @@
-import { Component, type ReactNode, type ErrorInfo } from 'react';
+import { Component, type ReactNode } from 'react';
 
 interface Props {
   children: ReactNode;
@@ -17,10 +17,6 @@ export class QueryErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('QueryErrorBoundary caught:', error, errorInfo);
   }
 
   private resetErrorBoundary = () => {
