@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
 
@@ -19,11 +19,10 @@ vi.mock('@tanstack/react-router', () => ({
   HeadContent: () => <title>Test</title>,
 }));
 
+const mockUseQuery = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({
-    clear: vi.fn(),
-    invalidateQueries: vi.fn(),
-  }),
+  useQueryClient: () => ({ clear: vi.fn() }),
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -38,7 +37,6 @@ vi.mock('@/hooks/use-idle-timeout', () => ({
 // Import after mocks
 import { AuthProvider } from '@/contexts/auth-context';
 import { useAuth } from '@/hooks/use-auth';
-import { get } from '@/lib/api';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -79,7 +77,11 @@ describe('AuthLoader (root layout auth guard)', () => {
   });
 
   it('shows loading spinner when isLoading', () => {
-    vi.mocked(get).mockReturnValue(new Promise(() => {}));
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    });
 
     render(
       <AuthProvider>
@@ -93,8 +95,12 @@ describe('AuthLoader (root layout auth guard)', () => {
     expect(screen.queryByTestId('content')).not.toBeInTheDocument();
   });
 
-  it('renders children when authenticated', async () => {
-    vi.mocked(get).mockResolvedValue(mockUser);
+  it('renders children when authenticated', () => {
+    mockUseQuery.mockReturnValue({
+      data: mockUser,
+      isLoading: false,
+      isError: false,
+    });
 
     render(
       <AuthProvider>
@@ -104,14 +110,16 @@ describe('AuthLoader (root layout auth guard)', () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId('content')).toBeInTheDocument();
-    });
+    expect(screen.getByTestId('content')).toBeInTheDocument();
     expect(screen.getByTestId('content').textContent).toBe('Protected');
   });
 
-  it('redirects to /login when not authenticated', async () => {
-    vi.mocked(get).mockRejectedValue(new Error('Not authenticated'));
+  it('redirects to /login when not authenticated', () => {
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
 
     render(
       <AuthProvider>
@@ -121,12 +129,8 @@ describe('AuthLoader (root layout auth guard)', () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
-    });
-
     // The loading spinner shows because !isAuthenticated && currentPath !== '/login'
-    // is true (which is the same branch — the spinner shows while redirect happens)
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
     expect(screen.queryByTestId('content')).not.toBeInTheDocument();
   });
 });

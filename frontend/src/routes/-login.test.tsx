@@ -19,7 +19,6 @@ vi.mock('@/hooks/use-auth', () => ({
     logout: vi.fn(),
     isLoading: false,
     user: null,
-    checkAuth: vi.fn(),
   }),
 }));
 
@@ -32,7 +31,7 @@ vi.mock('@/hooks/use-toast', () => ({
 }));
 
 // Import after mocks
-import { LoginPage } from '@/routes/login';
+import { LoginPage } from '@/components/pages/login-page';
 
 // ── Tests ──────────────────────────────────────────────────────────
 

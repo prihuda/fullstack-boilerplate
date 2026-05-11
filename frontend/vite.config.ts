@@ -19,7 +19,7 @@ export default mergeConfig(
   }),
   defineViteConfig({
   plugins: [
-    TanStackRouterVite(),
+    TanStackRouterVite({ autoCodeSplitting: true }),
     react(),
     tailwindcss(),
   ],

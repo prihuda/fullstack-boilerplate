@@ -18,7 +18,7 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true, allowExportNames: ['Route', 'AuthContext', 'ToastContext'] }],
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true, allowExportNames: ['Route', 'AuthContext', 'ToastContext', 'LoginPage', 'DashboardPage'] }],
     },
   },
   {

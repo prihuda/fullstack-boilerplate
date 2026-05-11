@@ -1,26 +1,22 @@
 import {
   createContext,
-  useState,
   useCallback,
-  useEffect,
   type ReactNode,
 } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { post, get } from '@/lib/api';
 import type { User, TokenResponse, LoginRequest } from '@/types/auth';
 
-interface AuthState {
+export interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-}
-
-export interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  checkAuth: (options?: { showLoading?: boolean }) => Promise<void>;
 }
+
+const AUTH_ME_KEY = ['auth', 'me'] as const;
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -28,30 +24,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    isLoading: true,
-    isAuthenticated: false,
+  const { data: user, isLoading, isError } = useQuery({
+    queryKey: AUTH_ME_KEY,
+    queryFn: () => get<User>('/auth/me'),
+    retry: false,
+    staleTime: 30_000,
   });
-
-  const checkAuth = useCallback(async (options?: { showLoading?: boolean }) => {
-    if (options?.showLoading !== false) {
-      setState((prev) => ({ ...prev, isLoading: true }));
-    }
-    try {
-      const user = await get<User>('/auth/me');
-      setState({ user, isLoading: false, isAuthenticated: true });
-    } catch {
-      setState({ user: null, isLoading: false, isAuthenticated: false });
-    }
-  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const body: LoginRequest = { email, password };
     await post<TokenResponse>('/auth/login', body);
-    await checkAuth({ showLoading: false });
     queryClient.clear();
-  }, [checkAuth, queryClient]);
+  }, [queryClient]);
 
   const logout = useCallback(async () => {
     try {
@@ -59,18 +43,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore logout errors — clear local state regardless
     }
-    setState({ user: null, isLoading: false, isAuthenticated: false });
     queryClient.clear();
     await navigate({ to: '/login' });
   }, [navigate, queryClient]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void checkAuth();
-  }, [checkAuth]);
-
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, checkAuth }}>
+    <AuthContext.Provider
+      value={{
+        user: user ?? null,
+        isLoading,
+        isAuthenticated: !isLoading && !isError && user !== undefined,
+        login,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
