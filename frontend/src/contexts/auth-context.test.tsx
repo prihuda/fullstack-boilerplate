@@ -5,15 +5,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
-const mockNavigate = vi.fn();
 vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => mockNavigate,
+  useNavigate: () => vi.fn(),
 }));
 
 const mockUseQuery = vi.fn();
+const mockInvalidateQueries = vi.fn();
+const mockSetQueryData = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({
     clear: vi.fn(),
+    invalidateQueries: mockInvalidateQueries,
+    setQueryData: mockSetQueryData,
   }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
@@ -72,7 +75,6 @@ function renderWithAuth(queryState?: { data?: unknown; isLoading?: boolean; isEr
 describe('AuthProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNavigate.mockResolvedValue(undefined);
   });
 
   it('provides loading state initially', () => {
@@ -141,7 +143,7 @@ describe('AuthProvider', () => {
     });
   });
 
-  it('logout calls POST /auth/logout, clears state, navigates to /login', async () => {
+  it('logout calls POST /auth/logout and clears auth state', async () => {
     let queryState = { data: mockUser, isLoading: false, isError: false };
     mockUseQuery.mockImplementation(() => queryState);
 
@@ -172,9 +174,8 @@ describe('AuthProvider', () => {
     });
 
     expect(post).toHaveBeenCalledWith('/auth/logout');
-    expect(mockNavigate).toHaveBeenCalledWith({ to: '/login' });
 
-    // Simulate query cache clearing after logout
+    // Simulate query state cleared after logout
     queryState = { data: undefined as unknown as typeof mockUser, isLoading: false, isError: true };
     mockUseQuery.mockImplementation(() => queryState);
     rerender(

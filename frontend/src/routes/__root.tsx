@@ -1,4 +1,4 @@
-import { createRootRouteWithContext, HeadContent, Outlet, useRouter } from '@tanstack/react-router';
+import { createRootRouteWithContext, HeadContent, Outlet } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { AuthProvider } from '@/contexts/auth-context';
 import { useAuth } from '@/hooks/use-auth';
@@ -11,18 +11,16 @@ interface RouterContext {
 
 function AuthLoader() {
   const { isLoading, isAuthenticated, logout } = useAuth();
-  const router = useRouter();
-  const currentPath = router.state.location.pathname;
 
   useIdleTimeout(isAuthenticated ? logout : () => {});
 
   useEffect(() => {
-    if (!isAuthenticated && currentPath !== '/login') {
-      void router.navigate({ to: '/login', search: { redirect: currentPath } });
+    if (!isAuthenticated && window.location.pathname !== '/login') {
+      window.location.assign('/login');
     }
-  }, [isAuthenticated, currentPath, router]);
+  }, [isAuthenticated]);
 
-  if (isLoading || (!isAuthenticated && currentPath !== '/login')) {
+  if (isLoading || (!isAuthenticated && window.location.pathname !== '/login')) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />

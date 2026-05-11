@@ -4,7 +4,6 @@ import {
   type ReactNode,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
 import { post, get } from '@/lib/api';
 import type { User, TokenResponse, LoginRequest } from '@/types/auth';
 
@@ -22,7 +21,6 @@ export const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
 
   const { data: user, isLoading, isError } = useQuery({
     queryKey: AUTH_ME_KEY,
@@ -34,7 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const body: LoginRequest = { email, password };
     await post<TokenResponse>('/auth/login', body);
-    queryClient.clear();
+    // Refetch auth state — AuthLoader/LoginPage handles the redirect
+    await queryClient.invalidateQueries({ queryKey: AUTH_ME_KEY });
   }, [queryClient]);
 
   const logout = useCallback(async () => {
@@ -43,16 +42,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore logout errors — clear local state regardless
     }
-    queryClient.clear();
-    await navigate({ to: '/login' });
-  }, [navigate, queryClient]);
+    queryClient.setQueryData(AUTH_ME_KEY, null);
+    // AuthLoader's useEffect detects !isAuthenticated and redirects to /login
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider
       value={{
         user: user ?? null,
         isLoading,
-        isAuthenticated: !isLoading && !isError && user !== undefined,
+        isAuthenticated: !isLoading && !isError && !!user,
         login,
         logout,
       }}
