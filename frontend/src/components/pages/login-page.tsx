@@ -1,4 +1,3 @@
-import { useNavigate } from '@tanstack/react-router';
 import { useForm } from '@tanstack/react-form';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -8,9 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export function LoginPage() {
-  const { isAuthenticated, login } = useAuth();
+  const { login } = useAuth();
   const { addToast } = useToast();
-  const navigate = useNavigate();
 
   const form = useForm({
     defaultValues: {
@@ -27,11 +25,6 @@ export function LoginPage() {
       }
     },
   });
-
-  if (isAuthenticated) {
-    void navigate({ to: '/' });
-    return null;
-  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">

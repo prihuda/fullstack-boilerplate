@@ -11,12 +11,12 @@ vi.mock('@tanstack/react-router', () => ({
 
 const mockUseQuery = vi.fn();
 const mockInvalidateQueries = vi.fn();
-const mockSetQueryData = vi.fn();
+const mockRemoveQueries = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({
     clear: vi.fn(),
     invalidateQueries: mockInvalidateQueries,
-    setQueryData: mockSetQueryData,
+    removeQueries: mockRemoveQueries,
   }),
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
@@ -143,7 +143,7 @@ describe('AuthProvider', () => {
     });
   });
 
-  it('logout calls POST /auth/logout and clears auth state', async () => {
+  it('logout calls POST /auth/logout, clears auth state, and invalidates router', async () => {
     let queryState = { data: mockUser, isLoading: false, isError: false };
     mockUseQuery.mockImplementation(() => queryState);
 
@@ -174,6 +174,7 @@ describe('AuthProvider', () => {
     });
 
     expect(post).toHaveBeenCalledWith('/auth/logout');
+    expect(mockRemoveQueries).toHaveBeenCalledWith({ queryKey: ['auth', 'me'] });
 
     // Simulate query state cleared after logout
     queryState = { data: undefined as unknown as typeof mockUser, isLoading: false, isError: true };
