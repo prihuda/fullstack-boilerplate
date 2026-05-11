@@ -9,7 +9,7 @@
 # ───────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-DB_CONTAINER="${DB_CONTAINER:-boilerplate-postgres-1}"
+DB_CONTAINER="${DB_CONTAINER:-fullstack-boilerplate-postgres-1}"
 DB_USER="${DB_USER:-app_user}"
 DB_NAME="${DB_NAME:-boilerplate}"
 

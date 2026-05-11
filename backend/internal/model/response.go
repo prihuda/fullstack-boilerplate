@@ -6,6 +6,7 @@ type APIResponse[T any] struct {
 	Meta    *Meta `json:"meta,omitempty"`
 }
 
+// Meta is reserved for pagination metadata.
 type Meta struct {
 	Total int64 `json:"total,omitempty"`
 }

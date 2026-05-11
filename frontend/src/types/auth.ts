@@ -10,6 +10,9 @@ export interface LoginRequest {
   password: string;
 }
 
+/** Response body from /auth/login — tokens are delivered via HttpOnly cookies,
+ *  so this type is only used for the TypeScript generic on `post<TokenResponse>`.
+ *  The frontend never reads these token values client-side. */
 export interface TokenResponse {
   access_token: string;
   token_type: string;

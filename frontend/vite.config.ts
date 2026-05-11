@@ -31,6 +31,9 @@ export default defineConfig({
               id.includes('node_modules/@tanstack/router-core')) {
             return 'tanstack-vendor';
           }
+          if (id.includes('node_modules/lucide-react')) {
+            return 'lucide-vendor';
+          }
         },
       },
     },

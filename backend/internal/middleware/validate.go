@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode"
@@ -38,7 +39,7 @@ var validate = validator.New()
 func ValidateRequest[T any](w http.ResponseWriter, r *http.Request) *T {
 	var req T
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4KB limit
 	defer r.Body.Close()
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -89,8 +90,10 @@ func writeValidationErr(w http.ResponseWriter, status int, code string, message 
 		errResp = model.ErrorResponse{Code: code, Message: message}
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": false,
 		"error":   errResp,
-	})
+	}); err != nil {
+		slog.Error("failed to encode validation response", "error", err)
+	}
 }

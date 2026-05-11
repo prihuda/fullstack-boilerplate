@@ -29,13 +29,15 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 
-					json.NewEncoder(w).Encode(map[string]any{
+					if err := json.NewEncoder(w).Encode(map[string]any{
 					"success": false,
 					"error": model.ErrorResponse{
 						Code:    "INTERNAL_ERROR",
 						Message: "An internal error occurred",
 					},
-				})
+				}); err != nil {
+					logger.Error("failed to encode panic response", "error", err)
+				}
 			}
 			}()
 

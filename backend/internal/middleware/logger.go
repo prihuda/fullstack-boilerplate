@@ -40,6 +40,10 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 
+			if reqID := chimw.GetReqID(r.Context()); reqID != "" {
+				w.Header().Set("X-Request-ID", reqID)
+			}
+
 			defer func() {
 				duration := time.Since(start)
 				msg := r.Method + " " + r.URL.Path

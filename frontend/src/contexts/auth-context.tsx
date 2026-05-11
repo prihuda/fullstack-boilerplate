@@ -19,12 +19,10 @@ interface AuthState {
 export interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  checkAuth: () => Promise<void>;
+  checkAuth: (options?: { showLoading?: boolean }) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
-
-const AUTH_KEY = ['auth', 'me'];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -36,8 +34,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: false,
   });
 
-  const checkAuth = useCallback(async () => {
-    setState((prev) => ({ ...prev, isLoading: true }));
+  const checkAuth = useCallback(async (options?: { showLoading?: boolean }) => {
+    if (options?.showLoading !== false) {
+      setState((prev) => ({ ...prev, isLoading: true }));
+    }
     try {
       const user = await get<User>('/auth/me');
       setState({ user, isLoading: false, isAuthenticated: true });
@@ -49,8 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const body: LoginRequest = { email, password };
     await post<TokenResponse>('/auth/login', body);
-    await checkAuth();
-    await queryClient.invalidateQueries({ queryKey: AUTH_KEY });
+    await checkAuth({ showLoading: false });
+    queryClient.clear();
   }, [checkAuth, queryClient]);
 
   const logout = useCallback(async () => {
@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Ignore logout errors — clear local state regardless
     }
     setState({ user: null, isLoading: false, isAuthenticated: false });
-    queryClient.invalidateQueries({ queryKey: AUTH_KEY });
+    queryClient.clear();
     await navigate({ to: '/login' });
   }, [navigate, queryClient]);
 

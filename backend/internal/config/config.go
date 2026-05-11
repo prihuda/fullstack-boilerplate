@@ -30,13 +30,13 @@ func Load() *Config {
 	}
 
 	return &Config{
-		ServerPort:        getEnv("SERVER_PORT", "8080"),
+		ServerPort:        GetEnv("SERVER_PORT", "8080"),
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		JWTSecret:         secret,
-		CORSAllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
+		CORSAllowedOrigins: GetEnv("CORS_ALLOWED_ORIGINS", ""),
+		LogLevel:          GetEnv("LOG_LEVEL", "info"),
 		CookieSecure:      cookieSecure,
-		TokenType:         getEnv("TOKEN_TYPE", "Bearer"),
+		TokenType:         GetEnv("TOKEN_TYPE", "Bearer"),
 	}
 }
 
@@ -63,7 +63,7 @@ func (c *Config) AllowedOrigins() []string {
 	return strings.Split(c.CORSAllowedOrigins, ",")
 }
 
-func getEnv(key, fallback string) string {
+func GetEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}

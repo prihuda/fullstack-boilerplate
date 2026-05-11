@@ -22,6 +22,18 @@ var DefaultTrustedCIDRs = []string{
 	"fc00::/7",
 }
 
+// rateLimitScript is a Lua script for atomic check-and-add rate limiting.
+var rateLimitScript = redis.NewScript(`
+    redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+    local count = redis.call('ZCARD', KEYS[1])
+    if tonumber(count) < tonumber(ARGV[2]) then
+        redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+        redis.call('EXPIRE', KEYS[1], ARGV[5])
+        return {1, count + 1}
+    end
+    return {0, count}
+`)
+
 // RateLimiterConfig holds rate limiting configuration.
 type RateLimiterConfig struct {
 	Requests    int
@@ -103,7 +115,7 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 			}
 
 			key := rl.config.KeyPrefix + ip
-			allowed, remaining, reset, err := rl.Allow(r.Context(), key)
+			allowed, count, err := rl.Allow(r.Context(), key)
 			if err != nil {
 				// If Redis fails, allow the request (fail-open)
 				slog.Error("rate limiter failed", "error", err)
@@ -111,12 +123,18 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
+			remaining := rl.config.Requests - count
+			if remaining < 0 {
+				remaining = 0
+			}
+			reset := time.Now().Add(rl.config.Window)
+
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.Requests))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
 
 			if !allowed {
-				WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests. Please try again later.")
+				WriteError(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests. Please try again later.")
 				return
 			}
 
@@ -125,48 +143,28 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
-// Allow checks if a request is allowed under the rate limit using a sliding window.
-// Only adds the request to the window if allowed (prevents memory leak from rejected requests).
-func (rl *RateLimiter) Allow(ctx context.Context, key string) (bool, int, time.Time, error) {
+// Allow checks if a request is allowed under the rate limit using an atomic Lua script.
+// Returns whether the request is allowed, the current request count, and any error.
+func (rl *RateLimiter) Allow(ctx context.Context, key string) (bool, int, error) {
 	now := time.Now()
-	windowStart := now.Add(-rl.config.Window)
+	member := strconv.FormatInt(now.UnixNano(), 10)
+	cutoff := now.Add(-rl.config.Window).UnixMicro()
+	ttl := int(rl.config.Window.Seconds()) * 2
 
-	pipe := rl.client.TxPipeline()
-
-	// Remove expired entries
-	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart.UnixNano(), 10))
-
-	// Count current requests
-	countCmd := pipe.ZCard(ctx, key)
-
-	// Set expiry on the key
-	pipe.Expire(ctx, key, rl.config.Window*2)
-
-	_, err := pipe.Exec(ctx)
+	result, err := rateLimitScript.Run(ctx, rl.client, []string{key}, cutoff, rl.config.Requests, now.UnixMicro(), member, ttl).Result()
 	if err != nil {
-		return false, 0, now, err
+		return true, rl.config.Requests, err
 	}
 
-	count := countCmd.Val()
-	allowed := int(count) < rl.config.Requests
-
-	if allowed {
-		// Only add the request if allowed — prevents memory leak from rejected requests
-		err = rl.client.ZAdd(ctx, key, redis.Z{
-			Score:  float64(now.UnixNano()),
-			Member: fmt.Sprintf("%d:%d", now.UnixNano(), now.UnixMilli()),
-		}).Err()
-		if err != nil {
-			return false, 0, now, err
-		}
+	vals, ok := result.([]any)
+	if !ok || len(vals) < 2 {
+		return true, rl.config.Requests, nil
 	}
 
-	remaining := rl.config.Requests - int(count) - 1
-	if remaining < 0 {
-		remaining = 0
-	}
+	allowed, _ := strconv.Atoi(fmt.Sprintf("%v", vals[0]))
+	count, _ := strconv.Atoi(fmt.Sprintf("%v", vals[1]))
 
-	return allowed, remaining, now.Add(rl.config.Window), nil
+	return allowed == 1, count, nil
 }
 
 func DefaultRateLimitConfig() RateLimiterConfig {

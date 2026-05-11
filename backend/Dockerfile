@@ -1,4 +1,7 @@
-FROM golang:1.26-trixie AS build
+#syntax=docker/dockerfile:1
+
+# ── Build stage ─────────────────────────────────────────────────────
+FROM dhi.io/golang:1.26-debian13-dev AS build
 
 WORKDIR /app
 
@@ -10,18 +13,11 @@ COPY --link . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /server ./cmd/server
 
-# ── Run stage ─────────────────────────────────────────────────────
-FROM debian:trixie-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget \
-    && rm -rf /var/lib/apt/lists/*
+# ── Run stage ────────────────────────────────────────────────────────
+FROM dhi.io/static:20250419-glibc-debian13
 
 COPY --from=build /server /server
 
 EXPOSE 8080
-
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1
 
 ENTRYPOINT ["/server"]
