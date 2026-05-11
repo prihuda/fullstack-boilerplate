@@ -4,11 +4,11 @@ Full-stack Go + React boilerplate with PostgreSQL, Redis/KeyDB, Docker Hardened 
 
 ## Stack
 
-| Layer       | Technology                                                                     |
-| ----------- | ------------------------------------------------------------------------------ |
-| Backend     | Go 1.26, chi v5, pgx v5, Bun ORM, PostgreSQL 18, KeyDB/Redis                  |
-| Frontend    | React 19, TypeScript 5.9, Vite 8, TanStack (Router + Query + Form), Tailwind v4, shadcn/ui, ESLint 10 |
-| Deployment  | Docker Hardened Images (DHI), Docker Compose, Nginx                            |
+| Layer | Technology |
+|-------|------------|
+| Backend | Go 1.26, chi v5, pgx v5, Bun ORM, PostgreSQL 18, KeyDB/Redis |
+| Frontend | React 19, TypeScript 6.0, Vite 8, TanStack (Router + Query + Form), Tailwind v4, shadcn/ui, Vitest, ESLint 10 |
+| Deployment | Docker Hardened Images (DHI), Docker Compose, Nginx, Cloudflare (edge) |
 
 ## Quick Start
 
@@ -28,7 +28,6 @@ docker compose up -d postgres keydb
 
 ```bash
 cd backend
-# Set env vars (see Configuration section below)
 export JWT_SECRET=your-secret-key-change-me
 export DATABASE_URL=postgres://app_user:devpassword@localhost:5432/boilerplate?sslmode=disable
 go mod tidy
@@ -56,7 +55,7 @@ cd backend
 bash scripts/seed.sh
 ```
 
-Creates an admin user: `admin@boilerplate.com` / `password123`
+Creates admin user: `admin@boilerplate.com` / `password123`
 
 ---
 
@@ -74,9 +73,9 @@ internal/
   middleware/
     auth.go                       — JWT verification from cookie or Authorization header
     logger.go                     — structured JSON request logging via slog (with request_id)
-    ratelimit.go                  — Redis sliding window rate limiter (struct-based, TxPipeline)
+    ratelimit.go                  — Redis sliding window rate limiter (atomic Lua script)
     recover.go                    — custom JSON panic handler (INTERNAL_ERROR)
-    security.go                   — OWASP security headers (HSTS 2y, CSP, X-Frame-DENY, etc.)
+    security.go                   — OWASP security headers (HSTS 2y, X-Frame-DENY, etc.)
     validate.go                   — generic JSON request validation (returns *T, toSnakeCase)
   model/
     user.go                       — User, RefreshToken structs
@@ -84,8 +83,6 @@ internal/
   repository/
     user_repo.go                  — bun.IDB-based user CRUD
     refresh_token_repo.go         — token rotation + cleanup in PostgreSQL transaction
-  sanitize/
-    sanitize.go                   — input sanitization helpers
   service/
     auth_service.go               — Login (bcrypt + JWT), Refresh (rotation with reuse detection), Logout, GetUser
 pkg/database/
@@ -97,51 +94,53 @@ scripts/
 
 ### API Endpoints
 
-| Method | Path                     | Auth     | Description                               |
-| ------ | ------------------------ | -------- | ----------------------------------------- |
-| POST   | /api/v1/auth/login       | No       | Login — sets cookies + returns tokens     |
-| POST   | /api/v1/auth/refresh     | Token*   | Rotate refresh token (cookie or body)     |
-| POST   | /api/v1/auth/logout      | Token*   | Revoke refresh token (cookie or body)     |
-| GET    | /api/v1/auth/me          | JWT      | Get current user                          |
-| GET    | /api/v1/health           | No       | DB + Redis health check                   |
-| GET    | /docs/json               | No       | Auto-generated route documentation (JSON) |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | /api/v1/auth/login | No | Login — sets cookies + returns tokens |
+| POST | /api/v1/auth/refresh | Token* | Rotate refresh token (cookie or body) |
+| POST | /api/v1/auth/logout | Token* | Revoke refresh token (cookie or body) |
+| GET | /api/v1/auth/me | JWT | Get current user |
+| GET | /api/v1/health | No | DB + Redis health check |
+| GET | /docs/json | No | Auto-generated route documentation (JSON) |
 
 _* Token can be sent as HttpOnly cookie (web) or `refresh_token` in JSON body (API clients)._
 
-**Login** returns tokens in both HttpOnly cookies (browsers) and JSON body (API clients).  
+**Login** returns tokens in both HttpOnly cookies (browsers) and JSON body (API clients).
 **Refresh** uses rotating tokens with reuse detection — if a stolen token is reused, all sessions are revoked.
 
 ### Configuration
 
-| Variable             | Default                  | Required | Description                        |
-| -------------------- | ------------------------ | -------- | ---------------------------------- |
-| SERVER_PORT          | 8080                     | No       | HTTP listen port                   |
-| DATABASE_URL         | —                        | Yes      | PostgreSQL connection string       |
-| JWT_SECRET           | —                        | **Yes**  | JWT signing key (min 32 chars)     |
-| CORS_ALLOWED_ORIGINS | http://localhost:3000    | No       | Comma-separated allowed origins   |
-| LOG_LEVEL            | info                     | No       | debug, info, warn, error           |
-| COOKIE_SECURE        | true                     | No       | Set Secure flag on cookies (false for local HTTP dev) |
-| TOKEN_TYPE           | Bearer                   | No       | Token type field in login/refresh response body       |
-| KEYDB_ADDR           | localhost:6379           | No       | Redis/KeyDB address                |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| SERVER_PORT | 8080 | No | HTTP listen port |
+| DATABASE_URL | — | Yes | PostgreSQL connection string |
+| JWT_SECRET | — | **Yes** | JWT signing key (min 32 chars) |
+| CORS_ALLOWED_ORIGINS | http://localhost:3000 | No | Comma-separated allowed origins |
+| LOG_LEVEL | info | No | debug, info, warn, error |
+| COOKIE_SECURE | true | No | Set Secure flag on cookies (false for local HTTP dev) |
+| TOKEN_TYPE | Bearer | No | Token type field in login/refresh response body |
+| KEYDB_ADDR | localhost:6379 | No | Redis/KeyDB address |
 
 ### Key Backend Features
 
 - **Token rotation with reuse detection** — if a refresh token is used twice (stolen + legitimate), all sessions are invalidated
 - **Periodic cleanup** — goroutine purges expired/revoked tokens every 24 hours
-- **Rate limiting** — Redis sliding window with atomic TxPipeline (300 req/min global, stricter per-auth-route)
+- **Rate limiting** — Redis sliding window with atomic Lua script (300 req/min global, 30 req/min on auth routes)
+- **Fail-open on Redis error** — rate limit bypassed if Redis is down
 - **IP detection** — respects `CF-Connecting-IP` (Cloudflare), `X-Real-IP` (nginx), falls back to `RemoteAddr`
 - **Custom JSON panic recovery** — returns consistent `INTERNAL_ERROR` JSON instead of plain text
 - **Structured JSON logging** — every log entry includes `request_id`, `status`, `duration_ms`
 - **Stripped binary** — Docker build uses `-ldflags="-s -w"` for ~30% smaller images
 - **Connection pooling** — pgx with MaxConns=20, MinConns=5
+- **Timing-safe auth** — dummy bcrypt hash prevents email enumeration via response timing
 - **Auto-generated API docs** — `GET /docs/json` returns full route tree via chi docgen
 
 ### Running Tests
 
 ```bash
 cd backend
-go test ./...                    # all tests
-go test ./internal/service/...   # single package
+go test ./...                    # 86 tests
+go test -v ./internal/service/   # verbose, single package
 ```
 
 ---
@@ -152,7 +151,7 @@ go test ./internal/service/...   # single package
 
 ```
 src/
-  App.tsx                        — QueryClient, Router, Toast provider
+  App.tsx                        — QueryClient, AuthProvider, Router, Toast provider
   main.tsx                       — React 19 StrictMode mount
   index.css                      — Tailwind v4 @theme tokens (shadcn/ui colors)
   routeTree.gen.ts               — auto-generated by TanStack Router plugin
@@ -163,7 +162,7 @@ src/
     constants.ts                 — API_BASE_URL from env
     utils.ts                     — cn() helper (clsx + tailwind-merge)
   contexts/
-    auth-context.tsx             — AuthContext, AuthProvider (login/logout/checkAuth)
+    auth-context.tsx             — AuthContext, AuthProvider (passive cache subscriber via useQuery)
     toast-context.tsx            — ToastContext, ToastProvider (auto-dismiss notifications)
   hooks/
     use-auth.tsx                 — useAuth hook
@@ -172,33 +171,49 @@ src/
   components/
     layout/
       query-error-boundary.tsx   — Error boundary with retry
+    pages/
+      login-page.tsx             — Email + password form with TanStack Form
+      dashboard-page.tsx         — Dashboard with user info and logout
     ui/
       button.tsx                 — shadcn/ui CVA button (6 variants + loading state)
       card.tsx                   — Card layout components
-      input.tsx                  — Styled input with error state
+      input.tsx                  — Styled input
       label.tsx                  — Form label
     toaster.tsx                  — Toast notification display (auto-positioned)
   routes/
-    __root.tsx                   — Auth guard, AuthProvider wrapper, idle timeout, full SEO head
-    login.tsx                    — Email + password form with TanStack Form
-    index.tsx                    — Dashboard with user info and logout
+    __root.tsx                   — Root layout, HeadContent, Outlet (no auth guard)
+    index.tsx                    — Dashboard route with beforeLoad auth guard
+    login.tsx                    — Login route with cache-only beforeLoad check
 ```
 
 ### Key Frontend Features
 
+- **Route code splitting** — `autoCodeSplitting: true`, pages lazy-loaded per route
+- **Link preloading** — `defaultPreload: 'intent'` prefetches route data on hover
+- **Auth via beforeLoad** — TanStack Router `beforeLoad` + `throw redirect()` pattern
+- **Zero API calls on login page** — AuthProvider uses `useQuery({ enabled: false })`, auth state populated by route guards
 - **SEO via TanStack Router + static fallback** — OG tags, Twitter Card, canonical, theme-color, noscript in both `index.html` and per-route `head()`. Plus `sitemap.xml` and `robots.txt`.
-- **shadcn/ui components** — button, card, input, label with CVA variants, `components.json` config
+- **shadcn/ui components** — button, card, input, label with CVA variants
 - **Auto-refresh on 401** — API client silently rotates tokens and retries once
 - **GET deduplication** — concurrent requests to the same URL share one network call
 - **Mutation timeout** — POST/PUT/DELETE auto-abort after 30 seconds
 - **Idle timeout** — auto-logout after 30 minutes of inactivity
-- **Indonesian locale** — default `lang="id"` with localized descriptions
+- **TypeScript 6.0** — strict mode, exact types throughout
 
 ### Configuration
 
-| Variable       | Default                    | Description                   |
-| -------------- | -------------------------- | ----------------------------- |
-| VITE_API_URL   | http://localhost:8080/api/v1 | Backend API base URL        |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| VITE_API_URL | http://localhost:8080/api/v1 | Backend API base URL |
+
+### Running Tests
+
+```bash
+cd frontend
+npm test                         # 40 tests (Vitest)
+npm test -- --watch              # watch mode
+npm test -- --coverage           # with coverage report
+```
 
 ---
 
@@ -214,25 +229,30 @@ docker compose up -d
 docker compose up -d postgres keydb
 ```
 
-### Production
+### Production Build
 
 ```bash
-# Build and run everything
+docker compose build
 docker compose up -d
 ```
 
 All stages use **Docker Hardened Images (DHI)** from `dhi.io` — CIS-hardened, minimal footprint, non-root runtime.
 
-| Service  | Build image                     | Runtime image                       |
-| -------- | ------------------------------- | ----------------------------------- |
-| Backend  | `dhi.io/golang:1.26-debian13-dev` | `dhi.io/static:20250419-debian13`     |
-| Frontend | `dhi.io/node:24-debian13-dev`     | `dhi.io/nginx:1.30-debian13`          |
+| Service | Build image | Runtime image |
+|---------|-------------|---------------|
+| Backend | `dhi.io/golang:1.26-debian13-dev` | `dhi.io/static:20250419-debian13` |
+| Frontend | `dhi.io/node:24-debian13-dev` | `dhi.io/nginx:1.30-debian13` |
 
 The compose file includes:
-- **PostgreSQL** with persistent volume and health check
+- **PostgreSQL** with persistent volume (mount at `/var/lib/postgresql` for PG 18+ support) and health check
 - **KeyDB** (multi-threaded Redis drop-in) with LRU eviction (256MB max)
 - **Backend** — Go API hardened image (cache mounts, COPY --link, stripped binary, non-root)
-- **Frontend** — Nginx hardened image serving SPA (runtime VITE_API_URL injection via entrypoint.sh)
+- **Frontend** — Nginx hardened image serving SPA (VITE_API_URL as build-time ARG)
+
+### CSP & HSTS
+
+CSP in `nginx.conf` is relaxed for local development (`connect-src 'self' http://localhost:*`).
+In production, Cloudflare handles HSTS and strict CSP at the edge — no nginx changes needed.
 
 ---
 
@@ -274,10 +294,10 @@ root/
 
 ### Adding a new page
 
-1. Create `src/routes/items.tsx` with `createFileRoute('/items')`
-2. Add `head()` for SEO meta tags (title, description, OG, Twitter)
-3. TanStack Router auto-generates the route tree via `routeTree.gen.ts`
-4. Export the route component for Fast Refresh support
+1. Create the page component in `src/components/pages/your-page.tsx`
+2. Create `src/routes/your-page.tsx` — import and use the page component, set `beforeLoad` if protected
+3. Add `head()` for SEO meta tags
+4. TanStack Router auto-generates the route tree; route is lazy-loaded automatically
 
 ### Adding a new API endpoint
 
