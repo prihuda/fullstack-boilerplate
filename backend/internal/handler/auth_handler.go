@@ -15,13 +15,13 @@ import (
 )
 
 type AuthHandler struct {
-	authService         *service.AuthService
+	authService         service.AuthServicer
 	config              *config.Config
 	cookieSecure        bool
 	refreshCookieMaxAge int
 }
 
-func NewAuthHandler(authService *service.AuthService, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(authService service.AuthServicer, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
 		authService:         authService,
 		config:              cfg,

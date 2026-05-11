@@ -115,23 +115,13 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 			}
 
 			key := rl.config.KeyPrefix + ip
-			allowed, count, err := rl.Allow(r.Context(), key)
+			allowed, _, err := rl.Allow(r.Context(), key)
 			if err != nil {
 				// If Redis fails, allow the request (fail-open)
 				slog.Error("rate limiter failed", "error", err)
 				next.ServeHTTP(w, r)
 				return
 			}
-
-			remaining := rl.config.Requests - count
-			if remaining < 0 {
-				remaining = 0
-			}
-			reset := time.Now().Add(rl.config.Window)
-
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.Requests))
-			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
 
 			if !allowed {
 				WriteError(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests. Please try again later.")

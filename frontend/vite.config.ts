@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+import { defineConfig as defineViteConfig } from 'vite';
+import { defineConfig as defineVitestConfig, mergeConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
@@ -7,7 +8,16 @@ import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
+export default mergeConfig(
+  defineVitestConfig({
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts',
+      css: true,
+    },
+  }),
+  defineViteConfig({
   plugins: [
     TanStackRouterVite(),
     react(),
@@ -41,4 +51,5 @@ export default defineConfig({
   server: {
     port: 5173,
   },
-});
+  }),
+);

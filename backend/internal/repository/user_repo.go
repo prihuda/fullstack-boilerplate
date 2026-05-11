@@ -8,6 +8,12 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// UserRepo defines the interface for user repository operations.
+type UserRepo interface {
+	GetByID(ctx context.Context, id string) (*model.User, error)
+	GetByEmail(ctx context.Context, email string) (*model.User, error)
+}
+
 type UserRepository struct {
 	db bun.IDB
 }
