@@ -70,7 +70,10 @@ export async function request<T>(
 
   if (method === 'GET') {
     pendingRequests.set(key, promise);
-    promise.finally(() => pendingRequests.delete(key));
+    promise.then(
+      () => pendingRequests.delete(key),
+      () => pendingRequests.delete(key),
+    );
   }
 
   return promise;

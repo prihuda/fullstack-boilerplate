@@ -5,21 +5,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ── Mocks ──────────────────────────────────────────────────────────
 
 const mockLogin = vi.fn();
-const mockNavigate = vi.fn();
 
 vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => mockNavigate,
+  useNavigate: () => vi.fn(),
   createFileRoute: () => (opts: Record<string, unknown>) => opts,
 }));
 
 vi.mock('@/hooks/use-auth', () => ({
   useAuth: () => ({
-    isAuthenticated: false,
     login: mockLogin,
     logout: vi.fn(),
     isLoading: false,
     user: null,
-    checkAuth: vi.fn(),
+    isAuthenticated: false,
   }),
 }));
 
@@ -32,14 +30,13 @@ vi.mock('@/hooks/use-toast', () => ({
 }));
 
 // Import after mocks
-import { LoginPage } from '@/routes/login';
+import { LoginPage } from '@/components/pages/login-page';
 
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('LoginPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNavigate.mockResolvedValue(undefined);
   });
 
   it('renders login form with email and password fields', () => {
@@ -92,7 +89,7 @@ describe('LoginPage', () => {
     });
   });
 
-  it('navigates to home on successful login', async () => {
+  it('calls login on form submit', async () => {
     mockLogin.mockResolvedValue(undefined);
 
     render(<LoginPage />);
@@ -106,9 +103,6 @@ describe('LoginPage', () => {
     const submitBtn = screen.getByRole('button', { name: /sign in/i });
     await userEvent.click(submitBtn);
 
-    // Login success adds a toast and the component would navigate on next render.
-    // Since isAuthenticated stays false in our mock (the LoginPage checks isAuthenticated
-    // from useAuth which we've mocked), we verify login was called successfully.
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('test@example.com', 'password123');
     });

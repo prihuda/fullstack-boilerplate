@@ -1,20 +1,24 @@
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
-const mockNavigate = vi.fn();
 vi.mock('@tanstack/react-router', () => ({
-  useNavigate: () => mockNavigate,
+  useNavigate: () => vi.fn(),
 }));
 
+const mockUseQuery = vi.fn();
+const mockInvalidateQueries = vi.fn();
+const mockRemoveQueries = vi.fn();
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({
     clear: vi.fn(),
-    invalidateQueries: vi.fn(),
+    invalidateQueries: mockInvalidateQueries,
+    removeQueries: mockRemoveQueries,
   }),
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -25,7 +29,7 @@ vi.mock('@/lib/api', () => ({
 // Import after mocks so they resolve to the mocked versions
 import { AuthProvider } from '@/contexts/auth-context';
 import { useAuth } from '@/hooks/use-auth';
-import { get, post } from '@/lib/api';
+import { post } from '@/lib/api';
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -41,7 +45,13 @@ function Wrapper({ children }: { children: ReactNode }) {
 }
 
 /** Helper to render a child that reads the auth context. */
-function renderWithAuth() {
+function renderWithAuth(queryState?: { data?: unknown; isLoading?: boolean; isError?: boolean }) {
+  mockUseQuery.mockReturnValue({
+    data: queryState?.data ?? undefined,
+    isLoading: queryState?.isLoading ?? true,
+    isError: queryState?.isError ?? false,
+  });
+
   function Consumer() {
     const auth = useAuth();
     return (
@@ -65,48 +75,42 @@ function renderWithAuth() {
 describe('AuthProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNavigate.mockResolvedValue(undefined);
   });
 
-  it('provides loading state initially', () => {
-    // Keep the /auth/me request pending so loading stays true
-    vi.mocked(get).mockReturnValue(new Promise(() => {}));
-    renderWithAuth();
-
-    expect(screen.getByTestId('loading').textContent).toBe('true');
+  it('starts with no loading state (auth check deferred to beforeLoad)', () => {
+    renderWithAuth({ data: undefined });
+    expect(screen.getByTestId('loading').textContent).toBe('false');
     expect(screen.getByTestId('authenticated').textContent).toBe('false');
   });
 
-  it('checkAuth sets authenticated state on success', async () => {
-    vi.mocked(get).mockResolvedValue(mockUser);
-    renderWithAuth();
+  it('sets authenticated state on success', () => {
+    renderWithAuth({ isLoading: false, data: mockUser, isError: false });
 
-    await waitFor(() => {
-      expect(screen.getByTestId('loading').textContent).toBe('false');
-    });
+    expect(screen.getByTestId('loading').textContent).toBe('false');
     expect(screen.getByTestId('authenticated').textContent).toBe('true');
     expect(screen.getByTestId('user-email').textContent).toBe('test@example.com');
   });
 
-  it('checkAuth sets unauthenticated on network error', async () => {
-    vi.mocked(get).mockRejectedValue(new Error('Network error'));
-    renderWithAuth();
+  it('sets unauthenticated on network error', () => {
+    renderWithAuth({ isLoading: false, data: undefined, isError: true });
 
-    await waitFor(() => {
-      expect(screen.getByTestId('loading').textContent).toBe('false');
-    });
+    expect(screen.getByTestId('loading').textContent).toBe('false');
     expect(screen.getByTestId('authenticated').textContent).toBe('false');
     expect(screen.getByTestId('user-email').textContent).toBe('none');
   });
 
-  it('login calls POST /auth/login then checkAuth', async () => {
-    vi.mocked(get).mockResolvedValue(mockUser);
+  it('login calls POST /auth/login', async () => {
     vi.mocked(post).mockResolvedValue({
       access_token: 'token',
       token_type: 'Bearer',
       refresh_token: 'rt',
       expires_in: 3600,
       expires_at: '2026-01-01T00:00:00Z',
+    });
+    mockUseQuery.mockReturnValue({
+      data: mockUser,
+      isLoading: false,
+      isError: false,
     });
 
     function LoginTestComponent() {
@@ -129,11 +133,6 @@ describe('AuthProvider', () => {
       </Wrapper>,
     );
 
-    // Wait for initial checkAuth to complete
-    await waitFor(() => {
-      expect(screen.getByTestId('loading').textContent).toBe('false');
-    });
-
     await act(async () => {
       await userEvent.click(screen.getByRole('button', { name: /login/i }));
     });
@@ -142,12 +141,12 @@ describe('AuthProvider', () => {
       email: 'test@example.com',
       password: 'password',
     });
-    // checkAuth is called after login (showLoading: false, so get is called again)
-    expect(get).toHaveBeenCalledTimes(2); // initial + after login
   });
 
-  it('logout calls POST /auth/logout, clears state, navigates to /login', async () => {
-    vi.mocked(get).mockResolvedValue(mockUser);
+  it('logout calls POST /auth/logout, clears auth state, and invalidates router', async () => {
+    let queryState = { data: mockUser, isLoading: false, isError: false };
+    mockUseQuery.mockImplementation(() => queryState);
+
     vi.mocked(post).mockResolvedValue(undefined);
 
     function LogoutTestComponent() {
@@ -164,23 +163,29 @@ describe('AuthProvider', () => {
       );
     }
 
-    render(
+    const { rerender } = render(
       <Wrapper>
         <LogoutTestComponent />
       </Wrapper>,
     );
-
-    await waitFor(() => {
-      expect(screen.getByTestId('authenticated').textContent).toBe('true');
-    });
 
     await act(async () => {
       await userEvent.click(screen.getByRole('button', { name: /logout/i }));
     });
 
     expect(post).toHaveBeenCalledWith('/auth/logout');
+    expect(mockRemoveQueries).toHaveBeenCalledWith({ queryKey: ['auth', 'me'] });
+
+    // Simulate query state cleared after logout
+    queryState = { data: undefined as unknown as typeof mockUser, isLoading: false, isError: true };
+    mockUseQuery.mockImplementation(() => queryState);
+    rerender(
+      <Wrapper>
+        <LogoutTestComponent />
+      </Wrapper>,
+    );
+
     expect(screen.getByTestId('authenticated').textContent).toBe('false');
     expect(screen.getByTestId('user-email').textContent).toBe('none');
-    expect(mockNavigate).toHaveBeenCalledWith({ to: '/login' });
   });
 });

@@ -28,7 +28,7 @@ fi
 $PSQL <<'SQL'
 INSERT INTO users (id, name, email, password_hash)
 VALUES (
-  '00000000-0000-0000-0000-000000000001',
+  '018f3a6e-4c7b-7a3c-8a1b-2c3d4e5f6a7b',
   'Admin',
   'admin@boilerplate.com',
   '$2b$12$Tu8vShrx2rnZIGzKQ3nR5O30TNCV7P75DZwrPjHEJDBALMdZVO9/K'

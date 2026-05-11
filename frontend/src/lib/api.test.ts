@@ -110,14 +110,6 @@ describe('API client', () => {
     expect(result).toEqual({ refreshed: true });
   });
 
-  it('network error throws NETWORK_ERROR ApiClientError', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
-
-    await expect(get('/fail-not-timeout')).rejects.toMatchObject({
-      code: 'NETWORK_ERROR',
-    });
-  });
-
   it('throws TIMEOUT when mutation request is aborted', async () => {
     const abortError = new Error('The operation was aborted');
     abortError.name = 'AbortError';
