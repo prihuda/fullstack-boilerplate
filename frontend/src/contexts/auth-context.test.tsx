@@ -77,9 +77,9 @@ describe('AuthProvider', () => {
     vi.clearAllMocks();
   });
 
-  it('provides loading state initially', () => {
-    renderWithAuth({ isLoading: true });
-    expect(screen.getByTestId('loading').textContent).toBe('true');
+  it('starts with no loading state (auth check deferred to beforeLoad)', () => {
+    renderWithAuth({ data: undefined });
+    expect(screen.getByTestId('loading').textContent).toBe('false');
     expect(screen.getByTestId('authenticated').textContent).toBe('false');
   });
 

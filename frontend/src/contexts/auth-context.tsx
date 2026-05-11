@@ -28,11 +28,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const router = getRouter();
 
-  const { data: user, isLoading, isError } = useQuery({
+  // Passive cache subscriber — never triggers network requests.
+  // Populated by dashboard route's beforeLoad (ensureQueryData)
+  // or by login mutation (invalidateQueries).
+  const { data: user } = useQuery({
     queryKey: AUTH_ME_KEY,
     queryFn: () => get<User>('/auth/me'),
-    retry: false,
-    staleTime: 30_000,
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   const login = useCallback(async (email: string, password: string) => {
@@ -64,8 +68,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user: user ?? null,
-        isLoading,
-        isAuthenticated: !isLoading && !isError && !!user,
+        isLoading: false,
+        isAuthenticated: !!user,
         login,
         logout,
       }}
