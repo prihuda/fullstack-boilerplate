@@ -168,6 +168,32 @@ Set via Cloudflare Transform Rules or Workers. See [Cloudflare CSP docs](https:/
 
 ---
 
+## npm Supply Chain
+
+### 2026-05-11: @tanstack/* Compromise
+
+On 2026-05-11, 42 `@tanstack/*` packages had 84 malicious versions published via a GitHub Actions cache poisoning attack combined with OIDC token extraction. Malware harvested credentials and exfiltrated them over an encrypted messenger network.
+
+**Our status:** Not affected. `package-lock.json` resolved to versions predating the malicious range. See [GHSA-g7cv-rxg3-hmpx](https://github.com/TanStack/router/security/advisories/GHSA-g7cv-rxg3-hmpx).
+
+### Mitigation: `min-release-age`
+
+The `.npmrc` file configures:
+
+```ini
+min-release-age = 7d
+```
+
+This prevents npm from installing any package version published less than 7 days ago. Combined with `package-lock.json` (which pins exact versions), this provides defense-in-depth against "publish and immediately poison" supply chain attacks.
+
+If you need to install a fresh package (e.g., a security patch published today), override temporarily:
+
+```bash
+npm install --min-release-age=0 <package>
+```
+
+---
+
 ## Reporting Issues
 
 For security vulnerabilities, open a GitHub Issue or contact the repository maintainer directly. Do not disclose vulnerabilities publicly until they are resolved.
